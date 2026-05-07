@@ -52,9 +52,9 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "hono": "^4.0.0",
-    "@hono/node-server": "^1.0.0",
-    "polygraph-db": "^0.1.0"
+    "@hono/node-server": "^2.0.1",
+    "hono": "^4.12.18",
+    "polygraph-db": "file:../polygraph"
   },
   "devDependencies": {
     "@types/node": "^25.0.0",
@@ -62,9 +62,6 @@
     "tsup": "^8.0.0",
     "typescript": "^6.0.0",
     "vitest": "^4.0.0"
-  },
-  "peerDependencies": {
-    "polygraph-db": ">=0.1.0"
   },
   "engines": {
     "node": ">=18"

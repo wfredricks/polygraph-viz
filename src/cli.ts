@@ -14,6 +14,7 @@ import { serveStatic } from '@hono/node-server/serve-static';
 import { resolve } from 'path';
 import { readFileSync } from 'fs';
 import { connectGraph, exportGraph, buildDemoGraph, computeStats, searchNodes, filterByLabels } from './graph-api.js';
+import { DEFAULT_COLORS } from './types.js';
 import type { VizConfig, GraphExport } from './types.js';
 
 // ── Parse CLI args ───────────────────────────────────────────────
@@ -154,7 +155,7 @@ function getIndexHtml(data: GraphExport): string {
     const nodeMap = new Map(nodes.map(n => [n.id, n]));
     
     // Color scheme
-    const colors = ${JSON.stringify(require('./types.js').DEFAULT_COLORS || {})};
+    const colors = ${JSON.stringify(DEFAULT_COLORS)};
     const getColor = (labels) => {
       for (const l of labels) if (colors[l]) return colors[l];
       return '#7F8C8D';
