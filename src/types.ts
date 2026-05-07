@@ -51,7 +51,73 @@ export interface VizConfig {
   write?: boolean;
   /** Auto-open browser */
   open?: boolean;
+  /** Theme configuration */
+  theme?: ThemeConfig;
+  /** Default layout mode */
+  layout?: LayoutMode;
 }
+
+/** Theme configuration — customizable colors and fonts */
+export interface ThemeConfig {
+  /** Color mode */
+  mode: 'dark' | 'light';
+  /** Background color (hex) */
+  background?: string;
+  /** Foreground/text color (hex) */
+  foreground?: string;
+  /** Accent color for highlights and UI elements (hex) */
+  accent?: string;
+  /** Panel/sidebar background */
+  panelBackground?: string;
+  /** Border color */
+  border?: string;
+  /** Base font size in pixels */
+  fontSize?: number;
+  /** Node label font size */
+  nodeFontSize?: number;
+  /** Override label colors */
+  labelColors?: ColorScheme;
+}
+
+/** Pre-built themes */
+export const DARK_THEME: ThemeConfig = {
+  mode: 'dark',
+  background: '#1a1a2e',
+  foreground: '#eeeeee',
+  accent: '#e94560',
+  panelBackground: '#16213e',
+  border: '#0f3460',
+  fontSize: 12,
+  nodeFontSize: 9,
+};
+
+export const LIGHT_THEME: ThemeConfig = {
+  mode: 'light',
+  background: '#ffffff',
+  foreground: '#333333',
+  accent: '#2563eb',
+  panelBackground: '#f8fafc',
+  border: '#e2e8f0',
+  fontSize: 12,
+  nodeFontSize: 9,
+};
+
+/** Layout modes for graph rendering */
+export type LayoutMode =
+  | 'force-directed'     // Default: spring physics
+  | 'hierarchical'       // Top-down tree layout
+  | 'radial'             // Radial from center node
+  | 'grid'               // Grid layout for flat collections
+  | 'concentric';        // Concentric circles by label
+
+/** Layout mode metadata */
+export const LAYOUT_MODES: Record<LayoutMode, { name: string; description: string; icon: string }> = {
+  'force-directed': { name: 'Force Directed', description: 'Physics-based spring layout', icon: '🕸️' },
+  'hierarchical': { name: 'Hierarchical', description: 'Top-down tree layout', icon: '🌳' },
+  'radial': { name: 'Radial', description: 'Radial from selected center', icon: '🎯' },
+  'grid': { name: 'Grid', description: 'Grid layout for collections', icon: '▦' },
+  'concentric': { name: 'Concentric', description: 'Rings grouped by label', icon: '◎' },
+};
 
 /** Graph statistics */
 export interface GraphStats {
