@@ -164,7 +164,9 @@ export const COMMANDS: CommandSpec[] = [
     category: 'slice',
     args: [],
     run: (ctx) => {
-      ctx.getView().focus(null);
+      const v = ctx.getView();
+      v.focus(null);
+      v.setFilter(null);
       ctx.setActiveFilter(null);
       ctx.echoSystem('Filters cleared. Showing full graph.');
     },
@@ -176,7 +178,9 @@ export const COMMANDS: CommandSpec[] = [
     args: [],
     run: (ctx) => {
       const ids = nodesInSegment(ctx.graph, 'biz');
-      ctx.getView().focus(ids);
+      const v = ctx.getView();
+      v.focus(null);
+      v.setFilter(ids);
       ctx.setActiveFilter('biz');
       ctx.echoSystem(`Filtered to biz segment (${ids.length} nodes).`);
     },
@@ -188,7 +192,9 @@ export const COMMANDS: CommandSpec[] = [
     args: [],
     run: (ctx) => {
       const ids = nodesInSegment(ctx.graph, 'dom');
-      ctx.getView().focus(ids);
+      const v = ctx.getView();
+      v.focus(null);
+      v.setFilter(ids);
       ctx.setActiveFilter('dom');
       ctx.echoSystem(`Filtered to dom segment (${ids.length} nodes).`);
     },
@@ -206,7 +212,9 @@ export const COMMANDS: CommandSpec[] = [
         );
         return;
       }
-      ctx.getView().focus(ids);
+      const v = ctx.getView();
+      v.focus(null);
+      v.setFilter(ids);
       ctx.setActiveFilter('imp');
       ctx.echoSystem(`Filtered to imp segment (${ids.length} nodes).`);
     },
@@ -227,7 +235,9 @@ export const COMMANDS: CommandSpec[] = [
         ctx.echoSystem(`No nodes with label "${label}".`);
         return;
       }
-      ctx.getView().focus(ids);
+      const v = ctx.getView();
+      v.focus(null);
+      v.setFilter(ids);
       ctx.setActiveFilter(`label:${label}`);
       ctx.echoSystem(`Filtered to "${label}" (${ids.length} nodes).`);
     },
@@ -250,7 +260,9 @@ export const COMMANDS: CommandSpec[] = [
         ctx.echoSystem(`Node "${id}" not found.`);
         return;
       }
-      ctx.getView().focus(id);
+      const v = ctx.getView();
+      v.setFilter(null);
+      v.focus(id);
       ctx.setActiveFilter(`focus:${id}`);
       ctx.echoSystem(`Focused on ${id}.`);
     },
@@ -271,7 +283,9 @@ export const COMMANDS: CommandSpec[] = [
         ctx.echoSystem(`Node "${id}" not found.`);
         return;
       }
-      ctx.getView().focus(id, { transitive: true });
+      const v = ctx.getView();
+      v.setFilter(null);
+      v.focus(id, { transitive: true });
       ctx.setActiveFilter(`trace:${id}`);
       ctx.echoSystem(`Tracing reachable subgraph from ${id}.`);
     },
@@ -299,7 +313,9 @@ export const COMMANDS: CommandSpec[] = [
         ctx.echoSystem(`No outgoing-edge path from ${from} to ${to}.`);
         return;
       }
-      ctx.getView().focus(path);
+      const v = ctx.getView();
+      v.setFilter(null);
+      v.focus(path);
       ctx.setActiveFilter(`path:${from}→${to}`);
       ctx.echoSystem(
         `Path (${path.length} hops): ${path.map((p) => `\`${p}\``).join(' → ')}`,
@@ -314,7 +330,9 @@ export const COMMANDS: CommandSpec[] = [
     run: (ctx, args) => {
       const n = args[0] ? Math.max(1, Math.min(50, parseInt(args[0], 10))) : 10;
       const ids = topHubs(ctx.graph, n);
-      ctx.getView().focus(ids);
+      const v = ctx.getView();
+      v.setFilter(null);
+      v.focus(ids);
       ctx.setActiveFilter(`hubs:${n}`);
       ctx.echoSystem(`Top ${n} most-connected nodes focused.`);
     },

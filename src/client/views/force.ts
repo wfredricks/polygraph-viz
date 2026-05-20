@@ -497,6 +497,32 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
       }
       applyFocus();
     },
+    setFilter(keepIds: string[] | null): void {
+      // Hard filter: hide non-matching nodes + edges with display:none
+      // so the visible graph is exactly the kept subset. Restores on null.
+      if (!keepIds) {
+        nodeSel.style('display', null);
+        linkSel.style('display', null);
+        linkGroup
+          .selectAll<SVGLineElement, ForceLink>('line.edge-hit')
+          .style('display', null);
+        return;
+      }
+      const keep = new Set<string>(keepIds);
+      nodeSel.style('display', (d) => (keep.has(d.id) ? null : 'none'));
+      linkSel.style('display', (d) => {
+        const s = (d.source as ForceNode).id;
+        const t = (d.target as ForceNode).id;
+        return keep.has(s) && keep.has(t) ? null : 'none';
+      });
+      linkGroup
+        .selectAll<SVGLineElement, ForceLink>('line.edge-hit')
+        .style('display', (d) => {
+          const s = (d.source as ForceNode).id;
+          const t = (d.target as ForceNode).id;
+          return keep.has(s) && keep.has(t) ? null : 'none';
+        });
+    },
     destroy(): void {
       ro.disconnect();
       sim.stop();

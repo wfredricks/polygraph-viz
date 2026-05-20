@@ -23,7 +23,7 @@ export interface ViewHandle {
    *                              subgraph in both directions (BFS)
    *   focus([id1, id2, ...])   — highlight the union of all 1-hop
    *                              neighborhoods. Used by chat 'Focus in
-   *                              Graph' button + segment chips.
+   *                              Graph' button.
    *
    * Views without a meaningful constellation (e.g. Sankey before nodes
    * are clickable) may no-op.
@@ -32,6 +32,21 @@ export interface ViewHandle {
     nodeId: string | string[] | null,
     opts?: { transitive?: boolean },
   ): void;
+  /**
+   * Hard filter: keep only the nodes whose id is in `keepIds` (plus the
+   * edges between them). Everything else is hidden — not dimmed,
+   * HIDDEN — so segment filtering produces a real "show only biz" view
+   * instead of accidentally lighting up neighbors-of-biz.
+   *
+   *   setFilter(null)            — clear filter, restore full view
+   *   setFilter([id1, id2, ...]) — render only those nodes + interior edges
+   *
+   * Why hard hide vs dim: focus(string[]) is union-of-1-hop-neighborhoods,
+   * which for large selections (e.g. all 145 biz nodes in the SI build
+   * SIG) pulls in almost every other node via adjacency. Segment commands
+   * need precise membership semantics that ignore adjacency.
+   */
+  setFilter(keepIds: string[] | null): void;
 }
 
 /**
@@ -41,4 +56,5 @@ export const NULL_HANDLE: ViewHandle = {
   setSearch: () => undefined,
   destroy: () => undefined,
   focus: () => undefined,
+  setFilter: () => undefined,
 };

@@ -4,6 +4,25 @@ All notable changes to polygraph-viz follow [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.3.3] — 2026-05-20
+
+### Fixed
+
+- **Segment commands (`/biz`, `/dom`, `/imp`, `/label`) now produce a real "show only X" view.** v0.3.2 implemented them via `ViewHandle.focus(string[])` which expands to the union of 1-hop neighborhoods — for large selections (e.g. all 145 biz nodes in the SI build SIG), that union pulls in almost every dom node via the 16 STAGE_BUILDS edges + the dom-to-biz adjacencies. The result was that `/biz` and `/dom` looked the same as `/all`. Bill caught this immediately and reported it.
+
+### Added
+
+- **`ViewHandle.setFilter(keepIds)` method** — hard membership filter, not a soft dim. Hides non-matching nodes and their edges via `display: none` so the visible graph is exactly the kept subset. Distinct semantics from `focus()`:
+  - `focus(ids)` = constellation (kept nodes + their direct neighbors light up, everything else dims)
+  - `setFilter(ids)` = membership (only kept nodes are visible at all; edges between them; everything else hidden)
+- Force implements `setFilter`; Chord and Sankey accept the signature as typed no-ops with a clear comment pointing to v0.4 as the canonical fix.
+
+### Changed
+
+- Segment commands (`/biz`, `/dom`, `/imp`, `/label`) now call `setFilter` for hard filtering and call `focus(null)` first to clear any prior focus halo.
+- Focus commands (`/focus`, `/trace`, `/path`, `/hubs`) now call `setFilter(null)` first to clear any prior segment filter before applying focus. Otherwise the focus halo would land on hidden nodes.
+- Filter-pill clear handler clears both `focus` and `setFilter`.
+
 ## [0.3.2] — 2026-05-20
 
 ### Added

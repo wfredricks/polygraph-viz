@@ -175,6 +175,7 @@ function ensureFilterPill(): void {
       pill.addEventListener('click', () => {
         state.activeFilter = null;
         state.currentHandle.focus(null);
+        state.currentHandle.setFilter(null);
         ensureFilterPill();
       });
       stats.appendChild(pill);

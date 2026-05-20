@@ -576,6 +576,13 @@ export function renderSankey(container: HTMLElement, graph: GraphExport): ViewHa
         });
       }
     },
+    setFilter(_keepIds: string[] | null): void {
+      // Why: hard segment filtering is not yet implemented for this view.
+      // Force is the canonical surface for it; the user can switch to
+      // Force, run /biz / /dom / etc, then switch back to see filtered
+      // results in this view via secondary filtering paths. v0.4 candidate.
+      void _keepIds;
+    },
     focus(_nodeId: string | string[] | null, _opts?: { transitive?: boolean }): void {
       // Why: focus / constellation highlighting is not yet implemented
       // for this view. Force is the canonical surface for it; extending
