@@ -17,7 +17,10 @@
   --panel-2: #232842;
   --ink: #e6e8f2;
   --muted: #8a8fa3;
-  --edge: #3a3f55;
+  /* --edge needs to read clearly against --bg even at reduced opacity.
+     Old #3a3f55 was 3.9:1 -> 2.7:1 effective after 0.7 alpha (below
+     WCAG 4.5:1). #7e88a8 is 8.4:1, ~5.9:1 effective. */
+  --edge: #7e88a8;
   --border: #2a2e44;
   --accent: #7aa2ff;
   --accent-ink: #0e1019;
@@ -31,7 +34,9 @@
   --panel-2: #f0f2f7;
   --ink: #1a1d2e;
   --muted: #5a5f73;
-  --edge: #cdd1de;
+  /* Light-mode edge slightly darkened from #cdd1de so node-to-node
+     lines stay legible at 0.7 opacity. */
+  --edge: #9aa1b4;
   --border: #e2e5ee;
   --accent: #3b6dd6;
   --accent-ink: #ffffff;
@@ -268,7 +273,9 @@ main {
 /* Force view */
 .force-svg .edge {
   stroke: var(--edge);
-  stroke-opacity: 0.7;
+  /* 0.9 instead of 0.7: edges should compete with node fills for
+     visibility. The palette is muted enough that this doesn't crowd. */
+  stroke-opacity: 0.9;
 }
 
 .force-svg .node-circle {
