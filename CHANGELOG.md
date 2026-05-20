@@ -4,6 +4,41 @@ All notable changes to polygraph-viz follow [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-05-20
+
+First NL-capable release. Adds natural-language search and a chat drawer that talks to the graph.
+
+### Added
+
+- **Natural-language chat drawer** sliding out from the left at 1/3 viewport width. Toggle via the ☰ button in the toolbar. Per-snapshot conversation persisted in `localStorage` so a page reload keeps the thread. Each assistant message has clickable node-id citations (focus the graph), an Evidence toggle (lists cited nodes), and a **Save This** button that lands the turn in the per-graph knowledge base for future context.
+- **`/api/nl-search` endpoint** (POST): embed query → cosine top-K from the per-graph embed cache → LLM rerank with schema fingerprint → returns ranked hits with per-hit "why this matched" annotations.
+- **`/api/chat` endpoint** (POST, SSE-streaming): multi-turn with conversation history. Pipeline: lexicon expand → embed → cosine retrieve → LLM rerank → one-hop subgraph snapshot → KB lookup → stream the graph-walked narrative. Companion `/api/chat/once` for non-streaming clients.
+- **`/api/kb` endpoints**: POST to save a chat turn (Save This), GET for KB size.
+- **`/api/embed` endpoint**: raw Bedrock Titan embedding for any text. Useful for clients that want to query the embed cache themselves.
+- **`/api/config` endpoint**: surfaces title, NL capability flags, and embed cache state so the client UI can show/hide NL features at runtime.
+- **CLI flags**:
+  - `--nl-search bedrock` (default: `off`)
+  - `--aws-profile`, `--aws-region`
+  - `--bedrock-llm-model` (default `us.anthropic.claude-haiku-4-5-20251001-v1:0`)
+  - `--bedrock-embed-model` (default `amazon.titan-embed-text-v2:0`)
+  - `--lexicon <path>` (per-domain term expansion JSON)
+  - `--kb <path>` (Save-This knowledge base file)
+- **Per-graph embedding cache** content-addressed by snapshot hash (SHA-256 of sorted node ids + labels + count). Embedded JSON file lives next to the graph data. Re-embeds only when the snapshot or model changes.
+- **Schema-aware LLM ranker**: label counts + edge type counts in the system prompt. Drops invented nodeIds. Result is filtered + reranked candidates with one-line "why" annotations.
+- **Graph-walking narrative answerer**: pulls ranked hits + one-hop neighbors, packs into structured subgraph snapshot, instructs the LLM to anchor every claim to a node summary or edge in the snapshot. Honors the 2026-05-12 insight "the narrative writes itself by walking the graph."
+- **Per-domain lexicon infrastructure** (`src/nl/lexicon.ts`): auto-picks lexicon by dominant Tier-2 domain prefix; default lexicons ship empty so operators add their own jargon.
+- **`@aws-sdk/client-bedrock-runtime`** as runtime dependency. Bedrock auth via standard AWS SDK credential chain (env vars or shared credentials with `--aws-profile`).
+
+### Fixed
+
+- **Sankey link clicks now open the edge inspector.** Thin link paths (1-2px stroke) and node rects covering link endpoints made clicks unreliable. Added a transparent hit-area halo layer above the visible ribbon (same two-layer pattern Force uses for thin edges). Node rects keep their click behavior at endpoints; mid-ribbon clicks open the edge inspector.
+- **Sankey node clicks now open the node inspector.** The handler used a dynamic `import('../ui/inspector.js')` which tsup with `splitting: false` did not bundle correctly. Replaced with a static import.
+
+### Notes for downstream embedders
+
+- NL features are off by default; adding `--nl-search bedrock` is the explicit opt-in. Clients without an LLM provider are unaffected.
+- When NL is enabled, the embed cache builds on first boot (~37 seconds for a 160-node graph against Titan v2:0). Subsequent boots reload the cache from disk and start instantly.
+
 ## [0.2.7] — 2026-05-20
 
 ### Added
