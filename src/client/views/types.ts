@@ -14,6 +14,18 @@ export interface ViewHandle {
   setSearch(query: string): void;
   /** Tear down DOM + simulations + listeners. */
   destroy(): void;
+  /**
+   * Focus on a node's connection constellation.
+   *
+   *   focus(null)              — clear focus (restore default rendering)
+   *   focus(id)                — highlight 1-hop neighborhood of `id`
+   *   focus(id, { transitive: true }) — highlight the full reachable
+   *                              subgraph in both directions (BFS)
+   *
+   * Views without a meaningful constellation (e.g. Sankey before nodes
+   * are clickable) may no-op.
+   */
+  focus(nodeId: string | null, opts?: { transitive?: boolean }): void;
 }
 
 /**
@@ -22,4 +34,5 @@ export interface ViewHandle {
 export const NULL_HANDLE: ViewHandle = {
   setSearch: () => undefined,
   destroy: () => undefined,
+  focus: () => undefined,
 };

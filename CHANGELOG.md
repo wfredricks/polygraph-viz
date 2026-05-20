@@ -4,6 +4,23 @@ All notable changes to polygraph-viz follow [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.2.4] — 2026-05-20
+
+### Added
+
+- **Connection constellation on click (Force view).** Clicking a node now dims everything except the connected constellation — the node itself, its direct neighbors, and the edges between them. Inspired by ECharts' `focusNodeAdjacency` pattern. The focused node gets an accent halo at 3px stroke; neighbors get a 1.6px accent ring; everything else drops to 12% opacity. Click the same node again to clear, click empty SVG background to clear, or press ESC.
+- **Shift-click for transitive constellation.** Holding Shift while clicking shows the *full reachable subgraph* in both directions via BFS, not just direct neighbors. Useful for "if this breaks, what else is affected?" in dependency graphs (e.g. trace FT-SI-16 forward to see everything downstream).
+- **`focus(nodeId, opts?)` method on `ViewHandle`** for programmatic focus. Allows future analyst panels (e.g. a build-order panel) to highlight a feature's dependency neighborhood by hovering rows in the panel.
+
+### Changed
+
+- Adjacency lookup tables (`outgoing` + `incoming` maps) are precomputed once at render time — O(E) up front, then O(1) for direct-neighbor focus and O(reachable-set) for transitive focus via BFS. For the 160-node SI build SIG, both modes feel instant.
+- Search now clears any active focus before applying its filter, so a search match isn't dimmed by a stale constellation overlay.
+
+### Known limitations
+
+- **Focus is only implemented in Force.** Sankey and Chord have the `focus()` method as a documented no-op for now; extending to those two surfaces is a v0.3 candidate (the layout-internal node ids and the multi-chain split make the implementation chunkier than Force's).
+
 ## [0.2.3] — 2026-05-20
 
 ### Added

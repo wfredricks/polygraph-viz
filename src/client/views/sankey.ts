@@ -548,6 +548,14 @@ export function renderSankey(container: HTMLElement, graph: GraphExport): ViewHa
         });
       }
     },
+    focus(_nodeId: string | null, _opts?: { transitive?: boolean }): void {
+      // Why: focus / constellation highlighting is not yet implemented
+      // for this view. Force is the canonical surface for it; extending
+      // to Sankey + Chord is tracked as a future v0.3 candidate. The
+      // interface method is required so main.ts can call it uniformly.
+      void _nodeId;
+      void _opts;
+    },
     destroy(): void {
       select(container).select('.sankey-wrapper').remove();
       clearInspector();

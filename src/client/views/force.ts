@@ -91,6 +91,21 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
     })
     .filter((l): l is ForceLink => l !== null);
 
+  // Adjacency lookup tables for the focus/constellation feature.
+  // Why O(E) once at render time: per-click work is then O(1) for the
+  // direct-neighbors case and O(reachable-set) for the transitive
+  // case via BFS.
+  const outgoing = new Map<string, Set<string>>();
+  const incoming = new Map<string, Set<string>>();
+  for (const n of nodes) {
+    outgoing.set(n.id, new Set());
+    incoming.set(n.id, new Set());
+  }
+  for (const e of graph.edges) {
+    outgoing.get(e.fromId)?.add(e.toId);
+    incoming.get(e.toId)?.add(e.fromId);
+  }
+
   // SVG. Tokens (stroke for edges, stroke for node outline) come from
   // CSS class selectors in styles.css, not from var(--) in attributes.
   const svg = select(container)
@@ -228,10 +243,106 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
       }),
   );
 
-  nodeSel.on('click', (_event, d) => {
+  // ── Focus / constellation state ─────────────────────────────
+  // Click a node → dim everything except the connected constellation
+  // (direct neighbors by default; transitive subgraph with Shift-click).
+  // Click the same node again → clear. Click empty space → clear. ESC → clear.
+  let focused: { id: string; transitive: boolean } | null = null;
+
+  function computeFocusSet(nodeId: string, transitive: boolean): Set<string> {
+    if (!transitive) {
+      const set = new Set<string>([nodeId]);
+      outgoing.get(nodeId)?.forEach((n) => set.add(n));
+      incoming.get(nodeId)?.forEach((n) => set.add(n));
+      return set;
+    }
+    const set = new Set<string>([nodeId]);
+    const queue: string[] = [nodeId];
+    while (queue.length) {
+      const cur = queue.shift()!;
+      outgoing.get(cur)?.forEach((n) => {
+        if (!set.has(n)) {
+          set.add(n);
+          queue.push(n);
+        }
+      });
+      incoming.get(cur)?.forEach((n) => {
+        if (!set.has(n)) {
+          set.add(n);
+          queue.push(n);
+        }
+      });
+    }
+    return set;
+  }
+
+  function applyFocus(): void {
+    if (!focused) {
+      nodeSel.style('opacity', 1);
+      nodeSel
+        .select<SVGCircleElement>('circle')
+        .attr('stroke-width', 0.8)
+        .attr('stroke', null);
+      linkSel.style('opacity', 0.9);
+      linkGroup
+        .selectAll<SVGLineElement, ForceLink>('line.edge-hit')
+        .style('pointer-events', 'auto');
+      return;
+    }
+    const focusSet = computeFocusSet(focused.id, focused.transitive);
+    const accent =
+      getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() ||
+      '#7aa2ff';
+    nodeSel
+      .style('opacity', (d) => (focusSet.has(d.id) ? 1 : 0.12))
+      .select<SVGCircleElement>('circle')
+      .attr('stroke-width', (d) =>
+        d.id === focused!.id ? 3 : focusSet.has(d.id) ? 1.6 : 0.8,
+      )
+      .attr('stroke', (d) => (focusSet.has(d.id) ? accent : null));
+    linkSel.style('opacity', (d) => {
+      const s = (d.source as ForceNode).id;
+      const t = (d.target as ForceNode).id;
+      return focusSet.has(s) && focusSet.has(t) ? 0.95 : 0.04;
+    });
+    linkGroup
+      .selectAll<SVGLineElement, ForceLink>('line.edge-hit')
+      .style('pointer-events', (d) => {
+        const s = (d.source as ForceNode).id;
+        const t = (d.target as ForceNode).id;
+        return focusSet.has(s) && focusSet.has(t) ? 'auto' : 'none';
+      });
+  }
+
+  nodeSel.on('click', (event: MouseEvent, d) => {
     const viz = vizById.get(d.id);
     if (viz) showNode(viz);
+    const transitive = event.shiftKey;
+    if (focused && focused.id === d.id && focused.transitive === transitive) {
+      focused = null;
+    } else {
+      focused = { id: d.id, transitive };
+    }
+    applyFocus();
+    event.stopPropagation();
   });
+
+  // Click on empty SVG background clears focus.
+  svg.on('click', () => {
+    if (focused) {
+      focused = null;
+      applyFocus();
+    }
+  });
+
+  // ESC clears focus.
+  const escHandler = (e: KeyboardEvent): void => {
+    if (e.key === 'Escape' && focused) {
+      focused = null;
+      applyFocus();
+    }
+  };
+  document.addEventListener('keydown', escHandler);
 
   // ── ResizeObserver: keep the simulation centered as the container resizes.
   // Why: the renderer runs once at mount time; if the page is still
@@ -252,6 +363,11 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
   // ── ViewHandle ──────────────────────────────────────────────
   const handle: ViewHandle = {
     setSearch(query: string): void {
+      // Why: search clears any active focus so a search match isn't
+      // dimmed by a stale constellation overlay.
+      if (focused) {
+        focused = null;
+      }
       if (!query) {
         nodeSel.style('opacity', 1);
         nodeSel
@@ -293,11 +409,20 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
           return matchedIds.has(s) && matchedIds.has(t) ? 'auto' : 'none';
         });
     },
+    focus(nodeId: string | null, opts?: { transitive?: boolean }): void {
+      if (!nodeId) {
+        focused = null;
+      } else {
+        focused = { id: nodeId, transitive: !!opts?.transitive };
+      }
+      applyFocus();
+    },
     destroy(): void {
       ro.disconnect();
       sim.stop();
       svg.remove();
       clearInspector();
+      document.removeEventListener('keydown', escHandler);
     },
   };
   return handle;
