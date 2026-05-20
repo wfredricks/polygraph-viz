@@ -4,6 +4,12 @@ All notable changes to polygraph-viz follow [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-05-20
+
+### Fixed
+
+- **Sankey auto-detect now finds the longest chain, not the greedy first step.** v0.2.1's greedy walk picked the dominant outgoing transition at each label, which terminated chains prematurely when the dominant target was a sink. Concrete symptom in the SI build SIG: `sw.feature` had 131 IMPLEMENTS edges to `intended_behavior` (a sink) and 75 INVOLVES edges to `sw.use_case` (which itself has 155 EXERCISES edges to `intended_behavior`); the greedy algorithm picked the 131-edge step and ended the chain at 2 layers, missing the real 3-layer story (`sw.feature → sw.use_case → intended_behavior`, weight 230). New algorithm enumerates every viable source, DFS's each one to depth 8, and returns the longest chain (tie-broken by total weight). Bill reported the bug 2026-05-20 10:00 EDT.
+
 ## [0.2.1] — 2026-05-20
 
 ### Added

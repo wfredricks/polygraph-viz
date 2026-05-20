@@ -71,12 +71,23 @@ function readChainOverride(): string[] | null {
 }
 
 /**
- * Auto-detect a chain: starting from the label with the most outbound
- * edges (and few inbound), follow the dominant outgoing transition
- * until the chain stops growing or revisits a label.
+ * Auto-detect a chain through the graph's label-to-label transition graph.
  *
- * This is a heuristic — Sankey's auto-detect is "best-effort"; the
- * user can always override via ?sankey=...
+ * Strategy: enumerate every viable source (a label with outbound
+ * transitions and zero inbound, or the next-best by `out - in` score),
+ * DFS each one, and return the LONGEST chain found. Tie-break by total
+ * edge weight along the chain so wider flows win over narrower ones at
+ * the same length.
+ *
+ * Why not greedy (the v0.1 behavior): greedy picks the dominant outgoing
+ * transition at each step. If that transition leads to a sink (e.g.
+ * sw.feature -> intended_behavior with 131 edges, but intended_behavior
+ * has zero out-edges) the walk terminates after one step and a longer
+ * chain through the non-dominant first-step transition (sw.feature ->
+ * sw.use_case -> intended_behavior, 75 + 155 edges) is missed entirely.
+ * The bug was reported by Bill 2026-05-20 10:00 EDT.
+ *
+ * The user can always override via ?sankey=A,B,C.
  */
 function autoDetectChain(graph: GraphExport, primary: Map<string, string>): string[] {
   // Build label -> {next-label -> count} transition map.
@@ -94,46 +105,63 @@ function autoDetectChain(graph: GraphExport, primary: Map<string, string>): stri
     inDegree.set(b, (inDegree.get(b) ?? 0) + 1);
   }
 
-  // Source label: max outDegree - inDegree (looks like a "start").
-  const labels = new Set<string>([
+  const allLabels = new Set<string>([
     ...transitions.keys(),
     ...inDegree.keys(),
   ]);
-  let source = '';
-  let bestScore = -Infinity;
-  for (const l of labels) {
-    const score = (outDegree.get(l) ?? 0) - (inDegree.get(l) ?? 0);
-    if (score > bestScore) {
-      bestScore = score;
-      source = l;
-    }
-  }
-  if (!source) return [];
+  if (allLabels.size === 0) return [];
 
-  // Greedy walk: at each step, follow the dominant outgoing transition
-  // to a label not already in the chain.
-  const chain = [source];
-  const visited = new Set([source]);
-  let current = source;
-  while (true) {
-    const row = transitions.get(current);
-    if (!row) break;
-    let best: string | null = null;
-    let bestCount = 0;
-    for (const [next, count] of row) {
-      if (visited.has(next)) continue;
-      if (count > bestCount) {
-        bestCount = count;
-        best = next;
+  // Enumerate candidate sources, ranked by (out - in) descending. A
+  // label with zero inbound is the cleanest source; we still consider
+  // others in case the graph has cycles or no clean root.
+  const sourceCandidates = [...allLabels]
+    .map((l) => ({
+      label: l,
+      score: (outDegree.get(l) ?? 0) - (inDegree.get(l) ?? 0),
+    }))
+    .filter((s) => (outDegree.get(s.label) ?? 0) > 0) // must have at least one outbound
+    .sort((a, b) => b.score - a.score);
+  if (sourceCandidates.length === 0) return [];
+
+  // DFS from each candidate; track the best (longest, then heaviest) chain.
+  const MAX_DEPTH = 8;
+  let bestChain: string[] = [];
+  let bestWeight = -1;
+
+  function dfs(current: string, path: string[], pathWeight: number, visited: Set<string>): void {
+    if (path.length > MAX_DEPTH) return;
+    // Score this prefix as a candidate chain too (a 3-layer answer can
+    // beat a 4-layer answer with a much smaller flow at the tail).
+    if (path.length >= 2) {
+      const better =
+        path.length > bestChain.length ||
+        (path.length === bestChain.length && pathWeight > bestWeight);
+      if (better) {
+        bestChain = [...path];
+        bestWeight = pathWeight;
       }
     }
-    if (!best) break;
-    chain.push(best);
-    visited.add(best);
-    current = best;
-    if (chain.length > 8) break; // Sanity cap.
+    const row = transitions.get(current);
+    if (!row) return;
+    // Explore in descending-weight order so heavier first-found chains
+    // bias the ties slightly toward the dominant story.
+    const next = [...row.entries()].sort((a, b) => b[1] - a[1]);
+    for (const [n, weight] of next) {
+      if (visited.has(n)) continue;
+      visited.add(n);
+      path.push(n);
+      dfs(n, path, pathWeight + weight, visited);
+      path.pop();
+      visited.delete(n);
+    }
   }
-  return chain;
+
+  for (const c of sourceCandidates) {
+    const visited = new Set<string>([c.label]);
+    dfs(c.label, [c.label], 0, visited);
+  }
+
+  return bestChain;
 }
 
 export function renderSankey(container: HTMLElement, graph: GraphExport): ViewHandle {
