@@ -4,6 +4,19 @@ All notable changes to polygraph-viz follow [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.2.6] — 2026-05-20
+
+### Fixed
+
+- **Pure-black palette slot disappeared in dark mode.** v0.2.5's 16-color palette included `#000000` at slot 8 (the Okabe-Ito recommendation for line plots on light backgrounds). Against the dark theme's `#0e1019` background, that slot rendered as effectively invisible. In the live SI build SIG, `sw.feature` hashed to slot 8 in the Chord view and produced ghost arcs. Bill reported 2026-05-20 10:23 EDT. Replaced `#000000` with `#00b3b3` (teal), and replaced `#6a3d9a` (also too dark for dark mode) with `#a675c4` (soft violet).
+- **Chord and Sankey still used the legacy hash-based color function.** v0.2.5 threaded the new `ColorMap` through Force only and left Chord/Sankey on the FNV-1a fallback, which produced collisions on the same data Force resolved cleanly. Now Chord and Sankey both consume the same per-render `ColorMap`, so the same label gets the same color across all three views and matches the Force-view legend.
+
+### Changed
+
+- All 16 palette slots are now constrained to a luminance band that reads against both dark (`#0e1019`) and light (`#fafafa`) backgrounds — nothing too dark to vanish in dark mode, nothing too pale to vanish in light mode.
+- `renderSingleSankey` gains a `colorMap` parameter; the top-level `renderSankey` builds it once and passes it to every chain's renderer.
+- `renderChord` builds a `ColorMap` per render and uses it for arc fills + ribbon fills.
+
 ## [0.2.5] — 2026-05-20
 
 ### Fixed

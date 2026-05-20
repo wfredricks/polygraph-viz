@@ -39,12 +39,22 @@
 import type { VizNode } from '../../types.js';
 
 /**
- * 16-color palette. First 8 are Okabe-Ito (colorblind-safe).
- * The next 8 are picked to maintain spacing on the HSL wheel and
- * stay visually distinct from the first 8 and from each other.
+ * 16-color palette.
+ *
+ * First 7 are Okabe-Ito (the colorblind-safe set, minus the black entry
+ * that Okabe-Ito reserves for line plots on light backgrounds — pure
+ * black disappears in dark mode against #0e1019, so it's replaced here
+ * with a teal that has distinct hue from the rest of the palette).
+ *
+ * Positions 8–15 are extension hues spaced around the HSL wheel to
+ * remain distinguishable from each other and from the Okabe-Ito core.
+ * Every entry is constrained to a luminance band that reads against
+ * both dark (#0e1019) and light (#fafafa) backgrounds: nothing too
+ * dark (would vanish against the dark bg), nothing too pale (would
+ * vanish against the light bg).
  */
 const PALETTE_16 = [
-  // Okabe-Ito 8
+  // Okabe-Ito 7 (excluding pure black at slot 8)
   '#56b4e9', // sky blue
   '#e69f00', // orange
   '#009e73', // bluish green
@@ -52,16 +62,16 @@ const PALETTE_16 = [
   '#f0e442', // yellow
   '#0072b2', // deep blue
   '#d55e00', // vermillion
-  '#000000', // black (only when on a non-black background)
-  // Extension 8 — additional hues
+  '#00b3b3', // teal (replaces Okabe-Ito's pure black; reads on dark + light)
+  // Extension 8 — additional hues, none too dark/light to vanish in either theme.
   '#7b3294', // royal purple
-  '#a6cee3', // pale blue
+  '#88c0d0', // muted teal-blue (lighter than #56b4e9 to stand apart)
   '#b2df8a', // pale green
   '#fb9a99', // salmon
   '#fdbf6f', // peach
   '#1f78b4', // medium blue
   '#33a02c', // medium green
-  '#6a3d9a', // dark purple
+  '#a675c4', // soft violet (replaces #6a3d9a which leaned too dark)
 ] as const;
 
 /** Utility labels that should not drive node color. */

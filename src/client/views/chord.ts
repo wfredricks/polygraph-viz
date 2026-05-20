@@ -21,7 +21,7 @@ import { arc } from 'd3-shape';
 import { chord, ribbon } from 'd3-chord';
 import { descending } from 'd3-array';
 import type { GraphExport, VizNode, VizEdge } from '../../types.js';
-import { colorForLabel, primaryLabel } from '../ui/palette.js';
+import { buildColorMap, primaryLabel } from '../ui/palette.js';
 import { showGroup, showAggregate, clearInspector, nodeMatches } from '../ui/inspector.js';
 import type { ViewHandle } from './types.js';
 import { NULL_HANDLE } from './types.js';
@@ -84,6 +84,9 @@ export function renderChord(container: HTMLElement, graph: GraphExport): ViewHan
   const outerRadius = innerRadius + 14;
 
   const { matrix, groups, groupCounts, edgesByPair } = buildMatrix(graph);
+  // Why: build a collision-free ColorMap from the full node set so
+  // arcs and ribbons match Force's legend. Sankey uses the same.
+  const colorMap = buildColorMap(graph.nodes);
   const vizById = new Map<string, VizNode>(graph.nodes.map((n) => [n.id, n]));
   const pairKey = (a: string, b: string): string =>
     a <= b ? `${a}||${b}` : `${b}||${a}`;
@@ -145,7 +148,7 @@ export function renderChord(container: HTMLElement, graph: GraphExport): ViewHan
     .attr('d', (d) =>
       groupArc({ startAngle: d.startAngle, endAngle: d.endAngle }) ?? '',
     )
-    .attr('fill', (d) => colorForLabel(groups[d.index]!))
+    .attr('fill', (d) => colorMap.colorForLabel(groups[d.index]!))
     .attr('stroke-width', 1)
     .style('cursor', 'pointer')
     .on('click', (_event, d) => {
@@ -186,7 +189,7 @@ export function renderChord(container: HTMLElement, graph: GraphExport): ViewHan
     .append('path')
     .attr('class', 'chord-ribbon')
     .attr('d', (d) => (ribbonGen as unknown as (x: unknown) => string | null)(d) ?? '')
-    .attr('fill', (d) => colorForLabel(groups[d.source.index]!))
+    .attr('fill', (d) => colorMap.colorForLabel(groups[d.source.index]!))
     .attr('stroke-width', 0.5)
     .style('cursor', 'pointer')
     .on('click', (_event, d) => {

@@ -29,7 +29,7 @@ import {
   type SankeyLink,
 } from 'd3-sankey';
 import type { GraphExport, VizNode } from '../../types.js';
-import { colorForLabel, primaryLabel } from '../ui/palette.js';
+import { buildColorMap, primaryLabel } from '../ui/palette.js';
 import { showEdge, clearInspector, nodeMatches } from '../ui/inspector.js';
 import type { ViewHandle } from './types.js';
 import { NULL_HANDLE } from './types.js';
@@ -205,6 +205,7 @@ function renderSingleSankey(
   chain: string[],
   width: number,
   height: number,
+  colorMap: { colorForLabel(label: string): string },
 ): ChainSelections {
   const chainIndex = new Map(chain.map((l, i) => [l, i]));
   const inChain = (id: string): boolean => {
@@ -308,7 +309,7 @@ function renderSingleSankey(
     .attr('d', sankeyLinkHorizontal())
     .attr('stroke', (d) => {
       const src = d.source as SNode;
-      return colorForLabel(src.layer);
+      return colorMap.colorForLabel(src.layer);
     })
     .attr('stroke-opacity', 0.35)
     .attr('stroke-width', (d) => Math.max(1, d.width ?? 1))
@@ -343,7 +344,7 @@ function renderSingleSankey(
     .attr('y', (d) => d.y0 ?? 0)
     .attr('height', (d) => Math.max(1, (d.y1 ?? 0) - (d.y0 ?? 0)))
     .attr('width', (d) => Math.max(1, (d.x1 ?? 0) - (d.x0 ?? 0)))
-    .attr('fill', (d) => colorForLabel(d.layer))
+    .attr('fill', (d) => colorMap.colorForLabel(d.layer))
     .attr('stroke-width', 0.5)
     .style('cursor', 'pointer')
     .on('click', (_event, d) => {
@@ -417,6 +418,9 @@ export function renderSankey(container: HTMLElement, graph: GraphExport): ViewHa
     primary.set(n.id, primaryLabel(n.labels));
   }
   const vizById = new Map<string, VizNode>(graph.nodes.map((n) => [n.id, n]));
+  // Why: shared collision-free ColorMap so arcs/links across all chains
+  // colour the same labels the same way as the Force view's legend.
+  const colorMap = buildColorMap(graph.nodes);
 
   // Resolve chains: URL override forces single mode; otherwise auto-detect.
   const override = readChainOverride();
@@ -510,6 +514,7 @@ export function renderSankey(container: HTMLElement, graph: GraphExport): ViewHa
       chain,
       wrapperWidth,
       perChainHeight,
+      colorMap,
     );
     allSelections.push(sel);
   }
