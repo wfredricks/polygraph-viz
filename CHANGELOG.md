@@ -4,6 +4,20 @@ All notable changes to polygraph-viz follow [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.2.3] — 2026-05-20
+
+### Added
+
+- **Sankey: "show all chains" toggle.** When the graph contains multiple disjoint chains in its label-transition graph (a common case for SIGs with weakly-connected components), Sankey now detects and renders all of them. A small toolbar appears at the top of the Sankey view with a status counter (`N chains shown` / `N more chains hidden`) and a toggle button (`Show all chains` / `Show primary only`). When all chains are shown, the view splits into stacked Sankey panels, one per chain, sized proportionally to the available height.
+- **`?sankeyAll=1` URL parameter** to default-on multi-chain mode on first load. Pairs with the existing `?sankey=A,B,C` override (which still forces single-chain mode with the supplied chain).
+- **Chain auto-detection across all components.** Iteratively peels off the longest chain from the remaining labels until no chain of length ≥2 remains; each label appears in at most one chain so the rendered Sankeys are visually disjoint.
+- For the SI build SIG (160 nodes, 383 edges) this resolves to two chains: `sw.feature → sw.use_case → intended_behavior` (the traceability flow, 230 edge-weight) and `sw.stage → sw.repo` (the build sequencing flow, 14 edge-weight). Both are now visible together. Bill requested 2026-05-20 10:03 EDT.
+
+### Changed
+
+- `renderSankey` factored into `autoDetectChains` (returns string[][]) + `renderSingleSankey` (one chain into one SVG) + a top-level wrapper that handles single vs. multi layout. The single-chain mode is unchanged from v0.2.2.
+- Module-level `showAllChains` cache persists the toggle state across view re-renders within a session; the URL parameter is the persistent form across page reloads.
+
 ## [0.2.2] — 2026-05-20
 
 ### Fixed
