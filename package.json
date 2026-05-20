@@ -1,6 +1,6 @@
 {
   "name": "polygraph-viz",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "Browser-based graph visualizer for PolyGraph \u2014 see your data",
   "author": "William Fredricks",
   "license": "Apache-2.0",
@@ -45,7 +45,8 @@
     "public/styles.css",
     "public/client.js",
     "LICENSE",
-    "README.md"
+    "README.md",
+    "scripts"
   ],
   "scripts": {
     "dev": "npx tsx src/cli.ts",
@@ -54,7 +55,9 @@
     "build:server": "tsup src/cli.ts src/index.ts src/middleware.ts src/server.ts --format esm --dts",
     "build:client": "tsup --config tsup.client.config.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "clone:ilabs": "node scripts/clone-ilabs.mjs",
+    "clone:ilabs:confirm": "node scripts/clone-ilabs.mjs --confirm"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1050.0",

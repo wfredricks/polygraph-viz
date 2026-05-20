@@ -4,6 +4,15 @@ All notable changes to polygraph-viz follow [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.3.5] — 2026-05-20
+
+### Added
+
+- **`npm run clone:ilabs` script** for sensible, transparent SIG cloning. The honest answer to "how do I move graph state from local to iLabs": a build-tool that extracts the local LevelDB + embed cache, rsyncs source + data to the Graviton build server, rebuilds + pushes to ECR, registers a new ECS task def revision, force-deploys, and waits for rollout. Safe by default — without `--confirm`, stops after the rsync step and prints the manual deploy commands. With `--confirm` runs end-to-end (~5 minutes wall-clock).
+- **`npm run clone:ilabs:confirm`** alias.
+- All flags overridable for non-SI graphs: `--source-volume`, `--service`, `--task-family`, `--ecr-repo`, `--cluster`, `--aws-profile`, `--ssh-host`.
+- **iLabs deploy now contains the full populated SIG** — 660 nodes, 1557 edges, 17 primary label classes, including 234 Tier-3 `cs_2026.*` implementation nodes. `/biz`, `/dom`, `/imp` show honestly different slices against real codebase data.
+
 ## [0.3.4] — 2026-05-20
 
 ### Fixed
