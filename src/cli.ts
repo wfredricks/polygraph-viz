@@ -64,6 +64,13 @@ async function main() {
     graphData = buildDemoGraph();
   }
 
+  // Permissive CORS for embedded use — the viewer page may be served
+  // from a different origin (e.g. a proposal-time static page).
+  app.use('/api/*', async (c, next) => {
+    c.header('Access-Control-Allow-Origin', '*');
+    await next();
+  });
+
   // API routes
   app.get('/api/graph', (c) => c.json(graphData));
   app.get('/api/stats', (c) => c.json(computeStats(graphData)));

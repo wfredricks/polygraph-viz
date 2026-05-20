@@ -104,23 +104,36 @@ export async function exportGraph(graph: PolyGraph): Promise<GraphExport> {
   const nodes: VizNode[] = [];
   const edges: VizEdge[] = [];
 
-  // Read all nodes by scanning common labels
-  // TODO: PolyGraph needs a "scan all nodes" API
-  // For now, use the Cypher bridge
-  try {
-    const result = await graph.query('MATCH (n) RETURN n');
-    for (const record of result) {
-      const n = (record as any).n;
-      if (n) {
-        nodes.push({
-          id: n.id || n.properties?.id || '',
-          labels: n.labels || [],
-          properties: n.properties || {},
-        });
-      }
+  // PolyGraph 0.1.3+ exposes `allNodes()` (colon-safe label-index walk).
+  // Previously this used the Cypher bridge with `MATCH (n) RETURN n`,
+  // which (a) silently returned empty for ids containing colons and
+  // (b) never read relationships at all. Both are fixed here by going
+  // through the engine's first-class adapters.
+  const allNodes = await graph.allNodes();
+  for (const n of allNodes) {
+    nodes.push({
+      id: n.id,
+      labels: n.labels,
+      properties: n.properties,
+    });
+  }
+
+  // Edges: walk each node's outgoing adjacency. Each edge surfaces once
+  // (from its source); we de-dupe by relationship id just in case.
+  const seen = new Set<string>();
+  for (const n of allNodes) {
+    const outgoing = await graph.getNeighbors(n.id, undefined, 'outgoing');
+    for (const { node: target, relationship: rel } of outgoing) {
+      if (seen.has(rel.id)) continue;
+      seen.add(rel.id);
+      edges.push({
+        id: rel.id,
+        type: rel.type,
+        fromId: n.id,
+        toId: target.id,
+        properties: rel.properties,
+      });
     }
-  } catch {
-    // Cypher bridge may not support label-free MATCH
   }
 
   return {
