@@ -24,6 +24,7 @@ import { renderChord } from './views/chord.js';
 import { renderSankey } from './views/sankey.js';
 import type { ViewHandle } from './views/types.js';
 import { NULL_HANDLE } from './views/types.js';
+import { installChat } from './ui/chat.js';
 
 interface AppState {
   graph: GraphExport | null;
@@ -94,6 +95,24 @@ async function boot(): Promise<void> {
     state.graph = await fetchGraph();
     void renderStats(state.graph);
     switchView(state.currentView);
+
+    // Install the chat drawer if the server enabled NL. Off-by-default
+    // so embedders without an LLM are unaffected.
+    try {
+      const cfg = await fetch('/api/config').then((r) => r.json() as Promise<{
+        nlEnabled?: boolean;
+        embedCache?: { snapshotHash?: string } | null;
+      }>);
+      if (cfg.nlEnabled) {
+        installChat({
+          nlEnabled: true,
+          snapshotHash: cfg.embedCache?.snapshotHash ?? 'default',
+          getCurrentViewHandle: () => state.currentHandle,
+        });
+      }
+    } catch (err) {
+      console.warn('chat drawer: config fetch failed', err);
+    }
   } catch (err) {
     const viz = document.getElementById('viz');
     if (viz) {

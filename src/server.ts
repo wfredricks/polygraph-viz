@@ -24,6 +24,11 @@ import { fileURLToPath } from 'node:url';
 import { readFileSync, existsSync } from 'node:fs';
 import { BedrockClient } from './nl/bedrock.js';
 import { EmbedCache, computeSnapshotHash } from './nl/embed-cache.js';
+import { computeSchemaFingerprint, rankWithLlm } from './nl/ranker.js';
+import { loadLexicon } from './nl/lexicon.js';
+import { KnowledgeBase } from './nl/kb.js';
+import { answerStream, answerOnce } from './nl/answerer.js';
+import type { ChatMessage } from './nl/bedrock.js';
 import {
   connectGraph,
   exportGraph,
@@ -147,6 +152,21 @@ export function buildApp(
   let embedCacheReady = false;
   let embedCacheError: string | null = null;
   let snapshotHash = '';
+  const schema = computeSchemaFingerprint(graphData);
+  const lexicon = loadLexicon(graphData, nlConfig.lexiconPath);
+  if (nlEnabled && lexicon.size > 0) {
+    console.log(`  📖 lexicon active: ${lexicon.size} terms (${lexicon.domain})`);
+  }
+  // Why: KB persists Save-This entries per graph. Path picked off
+  // --kb if provided, else next to embeddings cache, else /tmp.
+  const kbPath =
+    nlConfig.kbPath
+    ?? process.env['POLYGRAPH_VIZ_KB']
+    ?? resolve(process.cwd(), `kb-${snapshotHash || 'demo'}.json`);
+  const kb = nlEnabled ? new KnowledgeBase(kbPath) : null;
+  if (kb) {
+    console.log(`  💾 KB at ${kbPath} (${kb.size()} entries)`);
+  }
   if (bedrock) {
     snapshotHash = computeSnapshotHash(graphData);
     const cachePath = process.env['POLYGRAPH_VIZ_EMBED_CACHE']
@@ -278,27 +298,199 @@ export function buildApp(
       return c.json({ error: 'query is required' }, 400);
     }
     const k = Math.min(Math.max(body.k ?? 10, 1), 50);
+    // We retrieve a wider net (3K) for the ranker to filter from, then
+    // hand back at most `k` survivors.
+    const retrieveK = Math.min(50, k * 3);
     try {
-      const qvec = await bedrock.embed(query);
-      const hits = embedCache!.searchByEmbedding(qvec, k);
-      // Why: enrich with the original VizNode so the client can render
-      // labels/properties without a second /api/graph fetch.
+      const expandedQuery = lexicon.expand(query);
+      const qvec = await bedrock.embed(expandedQuery);
+      const cosineHits = embedCache!.searchByEmbedding(qvec, retrieveK);
+      // Schema-aware LLM rerank + per-hit 'why'.
+      const ranked = await rankWithLlm(bedrock, query, schema, cosineHits);
       const nodeIndex = new Map(graphData.nodes.map((n) => [n.id, n]));
-      const results = hits.map((h) => ({
-        nodeId: h.nodeId,
-        score: h.score,
-        text: h.text.slice(0, 240),
-        node: nodeIndex.get(h.nodeId) ?? null,
-      }));
+      const cosineByNode = new Map(cosineHits.map((h) => [h.nodeId, h]));
+      const top = ranked.slice(0, k).map((r) => {
+        const cosine = cosineByNode.get(r.nodeId);
+        return {
+          nodeId: r.nodeId,
+          why: r.why,
+          embedScore: cosine?.score ?? 0,
+          text: (cosine?.text ?? '').slice(0, 240),
+          node: nodeIndex.get(r.nodeId) ?? null,
+        };
+      });
       return c.json({
         query,
         snapshotHash,
-        results,
+        results: top,
+        // Surface the wider candidate set too for clients that want to
+        // see what the cosine layer thought before the ranker filtered.
+        candidates: cosineHits.slice(0, retrieveK).map((h) => ({
+          nodeId: h.nodeId,
+          embedScore: h.score,
+        })),
       });
     } catch (err) {
       console.error('nl-search failed:', err);
       return c.json({ error: 'nl-search failed', detail: String(err) }, 500);
     }
+  });
+
+  /**
+   * Multi-turn chat with graph-grounded answers (SSE streaming).
+   *
+   * Request: { query: string, history?: ChatMessage[] }
+   * Response: text/event-stream with frames:
+   *   event: meta     data: {citedNodes: [...], snapshotHash}
+   *   event: token    data: {text}  (many of these)
+   *   event: done     data: {}
+   *
+   * The client appends `token` frames to render streaming text, uses
+   * `meta` for the citation list (sent once before tokens start), and
+   * closes the stream on `done`.
+   */
+  app.post('/api/chat', async (c) => {
+    if (!bedrock || !kb) {
+      return c.json({ error: 'NL features not enabled on this server' }, 503);
+    }
+    if (!embedCacheReady) {
+      return c.json({ error: 'embed cache still building' }, 503);
+    }
+    const body = (await c.req.json()) as {
+      query?: string;
+      history?: ChatMessage[];
+    };
+    const query = (body.query ?? '').trim();
+    if (!query) return c.json({ error: 'query is required' }, 400);
+    const history = (body.history ?? []).filter(
+      (m) => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string',
+    );
+
+    // Retrieve + rank.
+    const expanded = lexicon.expand(query);
+    const qvec = await bedrock.embed(expanded);
+    const cosineHits = embedCache!.searchByEmbedding(qvec, 30);
+    const ranked = await rankWithLlm(bedrock, query, schema, cosineHits);
+    const kbMatches = kb.search(query, 3);
+
+    // SSE stream.
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const enc = new TextEncoder();
+        const frame = (event: string, data: unknown): void => {
+          controller.enqueue(
+            enc.encode(`event: ${event}
+data: ${JSON.stringify(data)}
+
+`),
+          );
+        };
+        frame('meta', {
+          citedNodes: ranked.map((r) => r.nodeId),
+          snapshotHash,
+        });
+        try {
+          for await (const chunk of answerStream(
+            bedrock!,
+            graphData,
+            schema,
+            title,
+            query,
+            history,
+            ranked,
+            kbMatches,
+          )) {
+            frame('token', { text: chunk });
+          }
+          frame('done', {});
+        } catch (err) {
+          frame('error', { detail: String(err) });
+        }
+        controller.close();
+      },
+    });
+
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      },
+    });
+  });
+
+  /**
+   * Non-streaming version of /api/chat for clients that prefer one
+   * JSON blob. Used by tests and by lightweight embedders.
+   */
+  app.post('/api/chat/once', async (c) => {
+    if (!bedrock || !kb) {
+      return c.json({ error: 'NL features not enabled on this server' }, 503);
+    }
+    if (!embedCacheReady) {
+      return c.json({ error: 'embed cache still building' }, 503);
+    }
+    const body = (await c.req.json()) as {
+      query?: string;
+      history?: ChatMessage[];
+    };
+    const query = (body.query ?? '').trim();
+    if (!query) return c.json({ error: 'query is required' }, 400);
+    const history = (body.history ?? []).filter(
+      (m) => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string',
+    );
+    const expanded = lexicon.expand(query);
+    const qvec = await bedrock.embed(expanded);
+    const cosineHits = embedCache!.searchByEmbedding(qvec, 30);
+    const ranked = await rankWithLlm(bedrock, query, schema, cosineHits);
+    const kbMatches = kb.search(query, 3);
+    const answer = await answerOnce(
+      bedrock,
+      graphData,
+      schema,
+      title,
+      query,
+      history,
+      ranked,
+      kbMatches,
+    );
+    return c.json({
+      query,
+      answer,
+      citedNodes: ranked.map((r) => r.nodeId),
+      snapshotHash,
+    });
+  });
+
+  /**
+   * Save This — append a chat turn to the KB.
+   * Body: { query, answer, citedNodes: string[] }
+   */
+  app.post('/api/kb', async (c) => {
+    if (!kb) {
+      return c.json({ error: 'NL features not enabled on this server' }, 503);
+    }
+    const body = (await c.req.json()) as {
+      query?: string;
+      answer?: string;
+      citedNodes?: string[];
+    };
+    if (!body.query || !body.answer) {
+      return c.json({ error: 'query and answer are required' }, 400);
+    }
+    const entry = kb.add({
+      query: body.query,
+      answer: body.answer,
+      citedNodes: body.citedNodes ?? [],
+    });
+    return c.json({ ok: true, entry });
+  });
+
+  app.get('/api/kb', (c) => {
+    if (!kb) {
+      return c.json({ error: 'NL features not enabled on this server' }, 503);
+    }
+    return c.json({ size: kb.size() });
   });
 
   app.get('/api/filter/labels', (c) => {

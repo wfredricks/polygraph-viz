@@ -28,7 +28,11 @@ export interface BedrockClientOptions {
   embedModel?: string;
 }
 
-const DEFAULT_LLM_MODEL = 'anthropic.claude-haiku-4-5-20251001-v1:0';
+// Why us.* prefix: Claude 4.5 Haiku requires an inference profile for
+// on-demand calls; the bare model id only works with provisioned
+// throughput. `us.*` is the US-region cross-AZ profile and the cheapest
+// way to get on-demand access.
+const DEFAULT_LLM_MODEL = 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
 const DEFAULT_EMBED_MODEL = 'amazon.titan-embed-text-v2:0';
 const DEFAULT_REGION = 'us-east-1';
 
