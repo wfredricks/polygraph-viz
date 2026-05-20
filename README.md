@@ -2,7 +2,18 @@
 
 **See your graph. Instantly.**
 
-A browser-based visualizer for [PolyGraph](https://github.com/wfredricks/polygraph) — the embeddable graph database. No Neo4j Browser required. No Java. One command.
+A browser-based visualizer for [PolyGraph](https://github.com/wfredricks/polygraph) — the embeddable graph database. Three D3-powered views, light + dark mode, no Neo4j Browser required.
+
+## What's new in v0.2
+
+- **Three views**, switchable from a toolbar:
+  - **Force** — d3-force directed graph (pan + zoom + drag).
+  - **Chord** — d3-chord diagram, grouped by primary node label, with ribbons sized by between-group traffic.
+  - **Sankey** — d3-sankey flow across a chain of label classes. Auto-detects a chain (longest dominant transition path), or pass `?sankey=A,B,C` to override.
+- **Light + dark mode** — toggle in the toolbar, persisted in localStorage, OS-preference-aware on first load.
+- **Search-as-greyout** — type in the toolbar search box; non-matching nodes dim to 15% opacity across all three views. Matched nodes get an accent halo in Force; matched groups stay solid in Chord; matched nodes light up in Sankey.
+- **Click to inspect** — every view exposes click-to-inspect via a shared right-side panel. Force/Sankey show the node's full property table; Chord shows the group's member list.
+- **Okabe-Ito colorblind-safe palette** — 12 hues assigned deterministically by FNV-1a hash of the label name, so `Requirement` is always the same blue across views and graphs.
 
 ## Quick Start
 
@@ -13,28 +24,59 @@ npx polygraph-viz --demo
 # Visualize a local PolyGraph database
 npx polygraph-viz --path ./my-graph-data
 
-# Connect to a remote twin
-npx polygraph-viz --url http://localhost:3000/api/graph
+# Pull from a remote PolyGraph viz endpoint
+npx polygraph-viz --url http://localhost:30100/api/graph
 ```
 
-Opens `http://localhost:4444` with a force-directed graph visualization.
-
-## Features
-
-- 🕸️ **Force-directed layout** — nodes repel, edges attract, graph self-organizes
-- 🎨 **Color by label** — Twin (blue), Document (green), Role (red), Task (yellow)
-- 🔍 **Search** — type to find nodes by any property value
-- 📊 **Stats panel** — node count, edge count, label distribution
-- 👆 **Click to inspect** — see all properties, incoming/outgoing relationships
-- 🌙 **Dark theme** — easy on the eyes
+Opens `http://localhost:4444` (override with `--port`).
 
 ## Embedding
 
 ```typescript
-// As Hono/Express middleware
-import { vizMiddleware } from 'polygraph-viz/middleware';
-app.use('/graph', vizMiddleware({ path: './data' }));
+import { serve } from '@hono/node-server';
+import { buildApp, loadGraph } from 'polygraph-viz';
+
+const graph = await loadGraph({ path: './data' });
+const app = buildApp(graph);
+serve({ fetch: app.fetch, port: 4444 });
 ```
+
+The Hono app exposes:
+
+- `GET /` — the viewer HTML shell.
+- `GET /styles.css`, `GET /client.js` — viewer assets.
+- `GET /api/graph` — full graph snapshot (nodes + edges).
+- `GET /api/stats` — node/edge counts, label + relationship distribution, density, component count.
+- `GET /api/search?q=<text>` — server-side substring filter (the in-browser search is independent).
+- `GET /api/filter/labels?labels=A,B,C` — node subset.
+
+All `/api/*` routes carry permissive CORS so the viewer can be embedded in a page served from a different origin.
+
+## Architecture
+
+```
+src/
+├── cli.ts          # argv -> loadGraph -> buildApp -> serve
+├── server.ts       # buildApp() + loadGraph() — Hono server + asset routes
+├── graph-api.ts    # PolyGraph -> GraphExport (allNodes + adjacency walk)
+├── middleware.ts   # (stub for Hono middleware export, v0.3)
+├── types.ts        # VizNode, VizEdge, GraphExport, VizConfig
+└── client/
+    ├── main.ts                 # client bootstrap
+    ├── ui/
+    │   ├── theme.ts            # light/dark CSS variable driver
+    │   ├── toolbar.ts          # view tabs + search debouncing
+    │   ├── stats.ts            # footer counts
+    │   ├── inspector.ts        # shared right-side detail panel
+    │   └── palette.ts          # Okabe-Ito 12-class palette
+    └── views/
+        ├── types.ts            # ViewHandle contract
+        ├── force.ts            # d3-force renderer
+        ├── chord.ts            # d3-chord renderer
+        └── sankey.ts           # d3-sankey renderer
+```
+
+`tsup.client.config.ts` bundles `src/client/main.ts` -> `public/client.js` for the browser (target ES2022, all d3 modules bundled in via `noExternal: [/^d3-/]`). The server bundle and middleware are emitted by the default `tsup` build into `dist/`.
 
 ## Why?
 
@@ -48,4 +90,4 @@ Apache 2.0
 
 - [**PolyGraph**](https://github.com/wfredricks/polygraph) — embeddable graph database
 - **PolyGraph Visualizer** — this package
-- **BangAuth** — embeddable identity provider (coming soon)
+- **BangAuth** — embeddable identity provider
