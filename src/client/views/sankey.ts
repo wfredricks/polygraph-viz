@@ -30,7 +30,7 @@ import {
 } from 'd3-sankey';
 import type { GraphExport, VizNode } from '../../types.js';
 import { buildColorMap, primaryLabel } from '../ui/palette.js';
-import { showEdge, clearInspector, nodeMatches } from '../ui/inspector.js';
+import { showEdge, showNode, clearInspector, nodeMatches } from '../ui/inspector.js';
 import type { ViewHandle } from './types.js';
 import { NULL_HANDLE } from './types.js';
 
@@ -297,6 +297,9 @@ function renderSingleSankey(
   }
   const laidOut = sankeyGen(layoutInput);
 
+  // Visible link layer: paints the colored ribbon. pointer-events:none
+  // so clicks fall through to the hit-area layer above (in render order)
+  // which sits on top of the node rects and is reliably clickable.
   const linkSel = svg
     .append('g')
     .attr('class', 'sankey-links')
@@ -313,6 +316,33 @@ function renderSingleSankey(
     })
     .attr('stroke-opacity', 0.35)
     .attr('stroke-width', (d) => Math.max(1, d.width ?? 1))
+    .attr('pointer-events', 'none');
+  linkSel.append('title').text((d) => {
+    const src = d.source as SNode;
+    const tgt = d.target as SNode;
+    return `${src.name} → ${tgt.name} (${(d as { edgeType?: string }).edgeType ?? 'edge'})`;
+  });
+
+  // Link hit-area halo: invisible, wide click target. Sits ABOVE the
+  // visible link layer (which is pointer-events:none) but BELOW the
+  // node rects. Where a link path is visible mid-ribbon, the halo
+  // catches clicks. Where a link endpoint is geometrically under a
+  // node rect, the rect catches clicks (node inspector opens).
+  // Why: thin sankey ribbons are nearly impossible to click as bare
+  // SVG paths; widening the visible ribbon would distort the chart.
+  // The halo is the standard fix.
+  const linkHitSel = svg
+    .append('g')
+    .attr('class', 'sankey-link-hits')
+    .attr('fill', 'none')
+    .selectAll<SVGPathElement, (typeof laidOut.links)[number]>('path')
+    .data(laidOut.links)
+    .enter()
+    .append('path')
+    .attr('class', 'sankey-link-hit')
+    .attr('d', sankeyLinkHorizontal())
+    .attr('stroke', 'transparent')
+    .attr('stroke-width', (d) => Math.max(16, d.width ?? 1))
     .style('cursor', 'pointer')
     .on('click', (_event, d) => {
       const edgeId = (d as { edgeId?: string }).edgeId;
@@ -323,7 +353,7 @@ function renderSingleSankey(
       const tgt = vizById.get(original.toId);
       showEdge(original, src, tgt);
     });
-  linkSel.append('title').text((d) => {
+  linkHitSel.append('title').text((d) => {
     const src = d.source as SNode;
     const tgt = d.target as SNode;
     return `${src.name} → ${tgt.name} (${(d as { edgeType?: string }).edgeType ?? 'edge'})`;
@@ -349,14 +379,7 @@ function renderSingleSankey(
     .style('cursor', 'pointer')
     .on('click', (_event, d) => {
       const v = vizById.get(d.graphId);
-      if (v) {
-        // Re-export showNode by importing it here would be cleaner; we
-        // already imported showEdge so we just defer to it for nodes
-        // via the existing click handler in the link path. For node
-        // clicks we route through a property-table inspector. Use a
-        // dynamic import-less reach via the inspector helper directly.
-        import('../ui/inspector.js').then((m) => m.showNode(v));
-      }
+      if (v) showNode(v);
     });
   rectSel.append('title').text((d) => `${d.name}\n${d.layer}`);
 
