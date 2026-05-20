@@ -13,6 +13,12 @@
  * Why SVG (not Canvas): under ~5k nodes SVG is fine and gives us free
  * hit-testing for click-to-inspect. The bookend SIG (304 nodes) and the
  * build SIG (~2k nodes when fully loaded) both fit comfortably.
+ *
+ * Why no var(--*) in SVG attributes: SVG presentation attributes set
+ * via .attr('stroke', 'var(--edge)') do not reliably resolve CSS
+ * variables across all browsers and contexts. We pin presentation
+ * tokens via CSS class selectors in styles.css so the theme system
+ * (which flips data-theme on <html>) reaches into the SVG correctly.
  */
 
 import { select } from 'd3-selection';
@@ -45,9 +51,20 @@ interface ForceLink extends SimulationLinkDatum<ForceNode> {
   type: string;
 }
 
+/**
+ * Read the container's real size, falling back to sensible defaults
+ * when the container has not been laid out yet.
+ */
+function measure(container: HTMLElement): { width: number; height: number } {
+  const r = container.getBoundingClientRect();
+  return {
+    width: Math.max(r.width || container.clientWidth || 800, 200),
+    height: Math.max(r.height || container.clientHeight || 600, 200),
+  };
+}
+
 export function renderForce(container: HTMLElement, graph: GraphExport): ViewHandle {
-  const width = container.clientWidth || 800;
-  const height = container.clientHeight || 600;
+  let { width, height } = measure(container);
 
   const nodes: ForceNode[] = graph.nodes.map((n: VizNode) => ({
     id: n.id,
@@ -57,8 +74,6 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
   }));
 
   const nodeById = new Map(nodes.map((n) => [n.id, n]));
-  // Why: keep the original VizNode handy so inspector + search can
-  // operate on the un-mutated properties object.
   const vizById = new Map(graph.nodes.map((n) => [n.id, n]));
 
   const links: ForceLink[] = graph.edges
@@ -70,8 +85,11 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
     })
     .filter((l): l is ForceLink => l !== null);
 
+  // SVG. Tokens (stroke for edges, stroke for node outline) come from
+  // CSS class selectors in styles.css, not from var(--) in attributes.
   const svg = select(container)
     .append('svg')
+    .attr('class', 'force-svg')
     .attr('width', '100%')
     .attr('height', '100%')
     .attr('viewBox', `0 0 ${width} ${height}`)
@@ -86,8 +104,7 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
     .data(links, (d) => d.id)
     .enter()
     .append('line')
-    .attr('stroke', 'var(--edge)')
-    .attr('stroke-opacity', 0.7)
+    .attr('class', 'edge')
     .attr('stroke-width', 1.2);
 
   const nodeSel = layer
@@ -102,20 +119,20 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
 
   nodeSel
     .append('circle')
+    .attr('class', 'node-circle')
     .attr('r', 7)
     .attr('fill', (d) => colorForLabel(d.primary))
-    .attr('stroke', 'var(--ink)')
     .attr('stroke-width', 0.8);
 
   nodeSel
     .append('text')
+    .attr('class', 'node-label')
     .text((d) => {
       const viz = vizById.get(d.id);
       return viz ? pickDisplayName(viz) : d.id;
     })
     .attr('x', 11)
     .attr('y', 4)
-    .attr('fill', 'var(--ink)')
     .attr('font-size', 10)
     .attr('pointer-events', 'none');
 
@@ -172,12 +189,31 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
     if (viz) showNode(viz);
   });
 
+  // ── ResizeObserver: keep the simulation centered as the container resizes.
+  // Why: the renderer runs once at mount time; if the page is still
+  // laying out (flex/grid resolving), the first measure() may report
+  // a wrong size and the graph clusters in the top-left. The observer
+  // catches the real size shortly after.
+  const ro = new ResizeObserver(() => {
+    const next = measure(container);
+    if (next.width === width && next.height === height) return;
+    width = next.width;
+    height = next.height;
+    svg.attr('viewBox', `0 0 ${width} ${height}`);
+    sim.force('center', forceCenter(width / 2, height / 2));
+    sim.alpha(0.3).restart();
+  });
+  ro.observe(container);
+
   // ── ViewHandle ──────────────────────────────────────────────
   const handle: ViewHandle = {
     setSearch(query: string): void {
-      // Greyout non-matches. Empty query restores everything.
       if (!query) {
-        nodeSel.style('opacity', 1).select('circle').attr('stroke-width', 0.8);
+        nodeSel.style('opacity', 1);
+        nodeSel
+          .select<SVGCircleElement>('circle')
+          .attr('stroke-width', 0.8)
+          .attr('stroke', null);
         linkSel.style('opacity', 0.7);
         return;
       }
@@ -187,9 +223,14 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
       }
       nodeSel
         .style('opacity', (d) => (matchedIds.has(d.id) ? 1 : 0.15))
-        .select('circle')
+        .select<SVGCircleElement>('circle')
         .attr('stroke-width', (d) => (matchedIds.has(d.id) ? 2.2 : 0.8))
-        .attr('stroke', (d) => (matchedIds.has(d.id) ? 'var(--accent)' : 'var(--ink)'));
+        .attr('stroke', (d) =>
+          matchedIds.has(d.id)
+            ? getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() ||
+              '#7aa2ff'
+            : null,
+        );
       linkSel.style('opacity', (d) => {
         const s = (d.source as ForceNode).id;
         const t = (d.target as ForceNode).id;
@@ -197,6 +238,7 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
       });
     },
     destroy(): void {
+      ro.disconnect();
       sim.stop();
       svg.remove();
       clearInspector();

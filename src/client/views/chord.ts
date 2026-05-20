@@ -94,6 +94,7 @@ export function renderChord(container: HTMLElement, graph: GraphExport): ViewHan
 
   const svg = select(container)
     .append('svg')
+    .attr('class', 'chord-svg')
     .attr('width', '100%')
     .attr('height', '100%')
     .attr('viewBox', `${-width / 2} ${-height / 2} ${width} ${height}`)
@@ -126,11 +127,11 @@ export function renderChord(container: HTMLElement, graph: GraphExport): ViewHan
 
   const arcSel = groupSel
     .append('path')
+    .attr('class', 'chord-arc')
     .attr('d', (d) =>
       groupArc({ startAngle: d.startAngle, endAngle: d.endAngle }) ?? '',
     )
     .attr('fill', (d) => colorForLabel(groups[d.index]!))
-    .attr('stroke', 'var(--bg)')
     .attr('stroke-width', 1)
     .style('cursor', 'pointer')
     .on('click', (_event, d) => {
@@ -147,13 +148,13 @@ export function renderChord(container: HTMLElement, graph: GraphExport): ViewHan
 
   groupSel
     .append('text')
+    .attr('class', 'chord-label')
     .attr('dy', '.35em')
     .attr('transform', (d) => {
       const a = midAngle(d);
       return `rotate(${(a * 180) / Math.PI - 90}) translate(${outerRadius + 8}) ${a > Math.PI ? 'rotate(180)' : ''}`;
     })
     .attr('text-anchor', (d) => (midAngle(d) > Math.PI ? 'end' : 'start'))
-    .attr('fill', 'var(--ink)')
     .attr('font-size', 11)
     .text((d) => {
       const g = groups[d.index]!;
@@ -169,9 +170,9 @@ export function renderChord(container: HTMLElement, graph: GraphExport): ViewHan
     .data(chords)
     .enter()
     .append('path')
+    .attr('class', 'chord-ribbon')
     .attr('d', (d) => (ribbonGen as unknown as (x: unknown) => string | null)(d) ?? '')
     .attr('fill', (d) => colorForLabel(groups[d.source.index]!))
-    .attr('stroke', 'var(--bg)')
     .attr('stroke-width', 0.5);
   ribbonSel.append('title').text((d) => {
     const a = groups[d.source.index]!;

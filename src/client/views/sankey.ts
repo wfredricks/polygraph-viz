@@ -247,6 +247,7 @@ export function renderSankey(container: HTMLElement, graph: GraphExport): ViewHa
 
   const svg = select(container)
     .append('svg')
+    .attr('class', 'sankey-svg')
     .attr('width', '100%')
     .attr('height', '100%')
     .attr('viewBox', `0 0 ${width} ${height}`)
@@ -261,6 +262,7 @@ export function renderSankey(container: HTMLElement, graph: GraphExport): ViewHa
     .data(laidOut.links)
     .enter()
     .append('path')
+    .attr('class', 'sankey-link')
     .attr('d', sankeyLinkHorizontal())
     .attr('stroke', (d) => {
       const src = d.source as SNode;
@@ -285,12 +287,12 @@ export function renderSankey(container: HTMLElement, graph: GraphExport): ViewHa
 
   const rectSel = nodeGroup
     .append('rect')
+    .attr('class', 'sankey-node')
     .attr('x', (d) => d.x0 ?? 0)
     .attr('y', (d) => d.y0 ?? 0)
     .attr('height', (d) => Math.max(1, (d.y1 ?? 0) - (d.y0 ?? 0)))
     .attr('width', (d) => Math.max(1, (d.x1 ?? 0) - (d.x0 ?? 0)))
     .attr('fill', (d) => colorForLabel(d.layer))
-    .attr('stroke', 'var(--bg)')
     .attr('stroke-width', 0.5)
     .style('cursor', 'pointer')
     .on('click', (_event, d) => {
@@ -301,11 +303,11 @@ export function renderSankey(container: HTMLElement, graph: GraphExport): ViewHa
 
   nodeGroup
     .append('text')
+    .attr('class', 'sankey-node-label')
     .attr('x', (d) => ((d.x0 ?? 0) < width / 2 ? (d.x1 ?? 0) + 6 : (d.x0 ?? 0) - 6))
     .attr('y', (d) => ((d.y0 ?? 0) + (d.y1 ?? 0)) / 2)
     .attr('dy', '0.35em')
     .attr('text-anchor', (d) => ((d.x0 ?? 0) < width / 2 ? 'start' : 'end'))
-    .attr('fill', 'var(--ink)')
     .attr('font-size', 10)
     .text((d) => {
       const n = d.name;
@@ -325,10 +327,10 @@ export function renderSankey(container: HTMLElement, graph: GraphExport): ViewHa
     .data([...layerX.entries()])
     .enter()
     .append('text')
+    .attr('class', 'sankey-header')
     .attr('x', (d) => d[1] + 7)
     .attr('y', 8)
     .attr('text-anchor', 'middle')
-    .attr('fill', 'var(--muted)')
     .attr('font-size', 11)
     .attr('font-weight', 600)
     .text((d) => d[0]);

@@ -259,3 +259,53 @@ main {
   font-style: italic;
   text-align: center;
 }
+
+/* ── SVG theming via class selectors ─────────────────────────
+   SVG presentation attributes set as .attr('stroke', 'var(--x)') don't
+   reliably resolve CSS variables; we set the SVG classes here in CSS
+   so theme toggles propagate atomically. */
+
+/* Force view */
+.force-svg .edge {
+  stroke: var(--edge);
+  stroke-opacity: 0.7;
+}
+
+.force-svg .node-circle {
+  stroke: var(--ink);
+}
+
+.force-svg .node-label {
+  fill: var(--ink);
+}
+
+/* Chord view */
+.chord-svg .chord-arc {
+  stroke: var(--bg);
+}
+
+.chord-svg .chord-ribbon {
+  stroke: var(--bg);
+}
+
+.chord-svg .chord-label {
+  fill: var(--ink);
+}
+
+/* Sankey view */
+.sankey-svg .sankey-link {
+  /* stroke color is set per-link from the label palette;
+     no CSS variable override needed here. */
+}
+
+.sankey-svg .sankey-node {
+  stroke: var(--bg);
+}
+
+.sankey-svg .sankey-node-label {
+  fill: var(--ink);
+}
+
+.sankey-svg .sankey-header {
+  fill: var(--muted);
+}
