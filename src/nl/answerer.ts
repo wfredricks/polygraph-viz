@@ -24,12 +24,14 @@ import type { KBEntry } from './kb.js';
 
 export interface AnswerContextNode {
   nodeId: string;
+  /** Short user-facing code (e.g. 'REQ-SI-070', 'installChat'). The LLM cites by this. */
+  code: string;
   labels: string[];
   name: string;
   summary: string;
-  /** One-hop adjacency: edges leaving + edges arriving, with their other-endpoint id. */
-  outgoing: Array<{ type: string; toId: string }>;
-  incoming: Array<{ type: string; fromId: string }>;
+  /** One-hop adjacency: edges leaving + edges arriving, with their other-endpoint code AND id. */
+  outgoing: Array<{ type: string; toId: string; toCode: string }>;
+  incoming: Array<{ type: string; fromId: string; fromCode: string }>;
 }
 
 /**
@@ -70,6 +72,16 @@ export function buildAnswerContext(
     }
   }
 
+  // Build a quick code lookup over the full graph (not just the
+  // included subset) so adjacency endpoints we never include can still
+  // be referenced by code in the prompt.
+  const codeById = new Map<string, string>();
+  for (const n of graph.nodes) {
+    const c = n.properties['code'];
+    if (typeof c === 'string' && c.length > 0) codeById.set(n.id, c);
+  }
+  const codeOrId = (nodeId: string): string => codeById.get(nodeId) ?? nodeId;
+
   const ctx: AnswerContextNode[] = [];
   for (const id of idList) {
     const node = nodeIndex.get(id);
@@ -89,11 +101,20 @@ export function buildAnswerContext(
           : '';
     ctx.push({
       nodeId: id,
+      code: codeOrId(id),
       labels: node.labels,
       name,
       summary,
-      outgoing: outgoing.get(id) ?? [],
-      incoming: incoming.get(id) ?? [],
+      outgoing: (outgoing.get(id) ?? []).map((e) => ({
+        type: e.type,
+        toId: e.toId,
+        toCode: codeOrId(e.toId),
+      })),
+      incoming: (incoming.get(id) ?? []).map((e) => ({
+        type: e.type,
+        fromId: e.fromId,
+        fromCode: codeOrId(e.fromId),
+      })),
     });
   }
   return ctx;
@@ -125,7 +146,7 @@ function buildAnswerSystemPrompt(
     'STYLE RULES:',
     '  - Write a tight, evidence-grounded answer (2-5 paragraphs typical, fewer when the query is narrow).',
     '  - EVERY claim must be supported by either a node summary or an edge that appears in the snapshot.',
-    '  - Cite nodes inline by their id wrapped in backticks, e.g. `REQ-SI-070` or `FT-SI-04`.',
+    '  - Cite nodes inline by their CODE wrapped in backticks (NOT their full id). Examples: `REQ-SI-070`, `FT-SI-09`, `installCommandPalette`, `polygraph-viz`. The snapshot below provides the code for every node — use exactly that string.',
     '  - Cite edges by their type when relevant, e.g. "via DEPENDS_ON" or "via IMPLEMENTS".',
     '  - Do NOT invent ids, labels, edge types, or properties not in the snapshot or the schema.',
     '  - If the snapshot does not contain enough information, say so plainly and suggest what to ask instead.',
@@ -136,21 +157,23 @@ function buildAnswerSystemPrompt(
 function formatContextForPrompt(ctx: AnswerContextNode[]): string {
   const lines: string[] = ['Subgraph snapshot:', ''];
   for (const n of ctx) {
-    lines.push(`### ${n.nodeId}`);
+    // The code is the citation handle. Make it prominent.
+    lines.push(`### ${n.code}`);
+    lines.push(`(id: ${n.nodeId})`);
     lines.push(`labels: ${n.labels.join(', ')}`);
-    if (n.name && n.name !== n.nodeId) lines.push(`name: ${n.name}`);
+    if (n.name && n.name !== n.code) lines.push(`name: ${n.name}`);
     if (n.summary) lines.push(`summary: ${n.summary}`);
     if (n.outgoing.length > 0) {
       const formatted = n.outgoing
         .slice(0, 12)
-        .map((e) => `--${e.type}--> ${e.toId}`)
+        .map((e) => `--${e.type}--> ${e.toCode}`)
         .join('; ');
       lines.push(`outgoing: ${formatted}${n.outgoing.length > 12 ? ' …' : ''}`);
     }
     if (n.incoming.length > 0) {
       const formatted = n.incoming
         .slice(0, 12)
-        .map((e) => `${e.fromId} --${e.type}-->`)
+        .map((e) => `${e.fromCode} --${e.type}-->`)
         .join('; ');
       lines.push(`incoming: ${formatted}${n.incoming.length > 12 ? ' …' : ''}`);
     }

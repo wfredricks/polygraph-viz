@@ -251,6 +251,21 @@ async function boot(): Promise<void> {
   try {
     state.fullGraph = await fetchGraph();
     state.graph = state.fullGraph;
+    // Fetch the code map up front so focusNode resolves instantly
+    // without per-click /api/resolve round-trips. Falls back to the
+    // server resolver if a token is missing from the cache.
+    try {
+      const cr = await fetch('/api/codes');
+      if (cr.ok) {
+        const data = (await cr.json()) as { byCode?: Record<string, string> };
+        if (data.byCode) {
+          (window as unknown as { __pgvByCode?: Record<string, string> }).__pgvByCode =
+            data.byCode;
+        }
+      }
+    } catch (err) {
+      console.warn('codes prefetch failed:', err);
+    }
     refreshStatusLine();
     switchView(state.currentView);
 

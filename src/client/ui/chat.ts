@@ -205,9 +205,37 @@ export function installChat(opts: ChatBootOptions): void {
     sendBtn.disabled = inputEl.value.trim().length === 0;
   });
 
-  function focusNode(nodeId: string): void {
+  function focusNode(tokenOrId: string): void {
     const handle = opts.getCurrentViewHandle();
-    handle.focus(nodeId);
+    // Resolve the token (may be a code, an id, a friendly name) to a
+    // canonical id via the server's resolver. Defer the focus call until
+    // resolution lands so we never focus on a non-existent node.
+    //
+    // Why call the server: codes can include user overrides that the
+    // client hasn't synced, and the server already maintains the inverse
+    // map. Fast path: if the token already exists in the snapshot byCode
+    // we set at boot we skip the round-trip. But the local cache is
+    // attached to window for simplicity.
+    const cached = (window as unknown as { __pgvByCode?: Record<string, string> })
+      .__pgvByCode;
+    const localHit = cached?.[tokenOrId];
+    if (localHit) {
+      handle.focus(localHit);
+      return;
+    }
+    // Server fallback.
+    void fetch(`/api/resolve/${encodeURIComponent(tokenOrId)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { id?: string | null } | null) => {
+        if (data && data.id) {
+          handle.focus(data.id);
+        } else {
+          // Last resort: pass the raw token; views may still handle
+          // an unknown id by no-op.
+          handle.focus(tokenOrId);
+        }
+      })
+      .catch(() => handle.focus(tokenOrId));
   }
 
   function renderMessage(msg: ChatMessage): HTMLElement {

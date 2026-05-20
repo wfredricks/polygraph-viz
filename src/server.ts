@@ -26,6 +26,7 @@ import { BedrockClient } from './nl/bedrock.js';
 import { EmbedCache, computeSnapshotHash } from './nl/embed-cache.js';
 import { computeSchemaFingerprint, rankWithLlm } from './nl/ranker.js';
 import { loadLexicon } from './nl/lexicon.js';
+import { generateCodes, resolveTokenToId } from './nl/code-generator.js';
 import { KnowledgeBase } from './nl/kb.js';
 import { answerStream, answerOnce } from './nl/answerer.js';
 import {
@@ -173,6 +174,42 @@ export function buildApp(
   let embedCacheError: string | null = null;
   let snapshotHash = '';
   const schema = computeSchemaFingerprint(graphData);
+  // Generate stable short codes for every node. The result becomes the
+  // user-facing handle in chat citations, /focus, and Force labels.
+  // Existing codes (set via prior CSV uploads) are honored.
+  let codeAssignment = generateCodes(graphData);
+  // Persist the codes onto the in-memory snapshot so /api/graph,
+  // /api/csv/*, and every downstream consumer sees them.
+  for (const n of graphData.nodes) {
+    const c = codeAssignment.codes.get(n.id);
+    if (c && n.properties['code'] !== c) {
+      n.properties['code'] = c;
+    }
+  }
+  console.log(
+    `  🏷  codes assigned: ${codeAssignment.codes.size} nodes` +
+      (codeAssignment.collisions > 0
+        ? ` (${codeAssignment.collisions} #N suffix collisions)`
+        : ''),
+  );
+  // If we have a writable PolyGraph instance, persist codes to disk too
+  // so future boots load them and tools that read raw LevelDB see them.
+  if (options.polygraphInstance) {
+    void (async () => {
+      let persisted = 0;
+      for (const [id, code] of codeAssignment.codes.entries()) {
+        try {
+          await options.polygraphInstance.updateNode(id, { code });
+          persisted++;
+        } catch (err) {
+          // Silent — a node may have been removed since snapshot; not fatal.
+          void err;
+        }
+      }
+      console.log(`  🏷  persisted ${persisted}/${codeAssignment.codes.size} codes to disk`);
+    })();
+  }
+
   const lexicon = loadLexicon(graphData, nlConfig.lexiconPath);
   if (nlEnabled && lexicon.size > 0) {
     console.log(`  📖 lexicon active: ${lexicon.size} terms (${lexicon.domain})`);
@@ -253,6 +290,37 @@ export function buildApp(
     }),
   );
   app.get('/api/graph', (c) => c.json(graphData));
+
+  /**
+   * Codes API: returns the assigned short codes for every node so the
+   * client can render labels + resolve tokens like `/focus FT-SI-09`
+   * against the inverse map.
+   *
+   * Pure read; the codes themselves live as a `code` property on each
+   * node in /api/graph, but this dedicated endpoint gives the client
+   * the inverse map (code → id) without a per-render walk.
+   */
+  app.get('/api/codes', (c) =>
+    c.json({
+      codes: Object.fromEntries(codeAssignment.codes),
+      byCode: Object.fromEntries(codeAssignment.byCode),
+      count: codeAssignment.codes.size,
+      collisions: codeAssignment.collisions,
+    }),
+  );
+
+  /**
+   * Token resolver: given a token (full id, code, or property like
+   * reqId/ucId/ftId/repoName/name), return the canonical node id.
+   * Used by /focus and /trace command handlers that accept friendly
+   * inputs from the user.
+   */
+  app.get('/api/resolve/:token', (c) => {
+    const token = c.req.param('token');
+    const id = resolveTokenToId(graphData, codeAssignment, token);
+    if (!id) return c.json({ token, id: null }, 404);
+    return c.json({ token, id });
+  });
   app.get('/api/stats', (c) => c.json(computeStats(graphData)));
   app.get('/api/search', (c) => {
     const q = c.req.query('q') || '';

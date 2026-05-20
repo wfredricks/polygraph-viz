@@ -915,3 +915,19 @@ body.chat-open #app main {
 
 .chat-csv-apply:hover { filter: brightness(1.1); }
 .chat-csv-apply:disabled { opacity: 0.5; }
+
+/* Inspector — code+id line under the title (v0.3.7). */
+.node-id-line {
+  margin: 2px 0 6px 0;
+  font-size: 11px;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.node-id-line strong {
+  color: var(--accent);
+  font-weight: 600;
+}
+.node-id-line code {
+  font-size: 10px;
+  color: var(--muted);
+}

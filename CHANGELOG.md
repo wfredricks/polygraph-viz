@@ -4,6 +4,37 @@ All notable changes to polygraph-viz follow [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.4.0-pre] — 2026-05-20
+
+### Added
+
+- **Node codes — short, unique-across-graph, user-facing handles** for every node alongside the canonical id. Codes are computed at server boot, persisted to LevelDB, exposed in `/api/graph` as `properties.code`, and visible everywhere the node id used to be the only handle. Per Bill's 17:29 EDT call (Option A).
+- **Code rule table** (per primary label, see `src/nl/code-generator.ts` JSDoc):
+  - `intended_behavior` → `reqId` verbatim (`REQ-SI-070`)
+  - `sw.use_case` → `ucId` (`UC-3`); `sw.feature` → `ftId` (`FT-SI-09`)
+  - `sw.repo` → `repoName`; `sw.stage` → `Stage N`
+  - `sw.file` → basename; generic basenames (`index.ts`, `types.ts`, ...) qualified with repo
+  - `sw.function` → function name; generic names (`parseCsv`, `main`, ...) qualified with file stem
+  - `sw.alt_flow` → `<fnName>.<kind><ordinal>` using the inventory's id ordinal (not post-hoc `#N`)
+  - `sw.call_out` → `<target>@<fnName><ordinal>`
+  - `cs_2026.*` (Tier-3) → mirrors the Tier-2 rule with `~ts` suffix
+- **`GET /api/resolve/:token`** — resolve a code/id/property-token to a node id. Powers `/focus CODE` and chat-citation click-through.
+- **`code` column in every node CSV** (`csv-portal.ts`) so users can override auto-generated codes via the CSV merge protocol.
+- **Force-view labels prefer `code`** over `name` when present and shorter.
+- **Inspector shows `code` line** under the node title.
+- **Chat citations resolve codes** — backtick-spans like `` `FT-SI-09` `` are clickable and focus the node.
+- **Client-side code→id inverse map** cached at boot so `/focus CODE` is instant.
+
+### Fixed
+
+- **Tier-3 (`cs_2026.*`) code collisions catastrophic** — the original rule emitted bare `guard~ts` / `try~ts` / `fetch~ts` regardless of progenitor function, producing 4000+ collisions on a 746-node graph. Now scoped to parent function + ordinal: `installChat.guard7~ts`. **4636 → 5 collisions on the SI build SIG (99.9% drop).**
+- **Tier-2 alt-flow/call-out under-discriminating** for kitchen-sink functions (`buildApp` had 24 colliding early-returns). Now uses the inventory's `-N` ordinal directly: `buildApp.guard24`.
+- **Generic basename / function-name cross-file collisions** — pre-empted by qualifying with repo (`<repo>/index.ts`) or file stem (`csv-loader.parseCsv`).
+
+### Limitations
+
+- 5 remaining collisions are legitimate same-name-within-same-repo clashes (two `parseCsv` functions in the same repo, the AST-extraction glitch where 2 alt-flow names became code snippets). Fixing these requires deeper disambiguation (full filepath) and is deferred.
+
 ## [0.3.6] — 2026-05-20
 
 ### Added

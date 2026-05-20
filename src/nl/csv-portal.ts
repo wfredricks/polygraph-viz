@@ -50,7 +50,7 @@ export const CSV_SCHEMAS: CsvSchema[] = [
     description: 'Source files as sw.file nodes',
     kind: 'node',
     label: 'sw.file',
-    columns: ['id', 'path', 'repo', 'language', 'lineCount'],
+    columns: ['id', 'code', 'path', 'repo', 'language', 'lineCount'],
     required: ['id', 'path', 'repo'],
   },
   {
@@ -58,7 +58,7 @@ export const CSV_SCHEMAS: CsvSchema[] = [
     description: 'Exported functions as sw.function nodes',
     kind: 'node',
     label: 'sw.function',
-    columns: ['id', 'name', 'signature', 'returnType', 'kind', 'isAsync', 'fileId', 'sourceLineStart', 'sourceLineEnd'],
+    columns: ['id', 'code', 'name', 'signature', 'returnType', 'kind', 'isAsync', 'fileId', 'sourceLineStart', 'sourceLineEnd'],
     required: ['id', 'name', 'fileId'],
   },
   {
@@ -66,7 +66,7 @@ export const CSV_SCHEMAS: CsvSchema[] = [
     description: 'Alternate/error flow branches as sw.alt_flow nodes',
     kind: 'node',
     label: 'sw.alt_flow',
-    columns: ['id', 'name', 'condition', 'behavior', 'fnId', 'sourceLineStart', 'sourceLineEnd'],
+    columns: ['id', 'code', 'name', 'condition', 'behavior', 'fnId', 'sourceLineStart', 'sourceLineEnd'],
     required: ['id', 'name', 'fnId'],
   },
   {
@@ -74,14 +74,14 @@ export const CSV_SCHEMAS: CsvSchema[] = [
     description: 'External invocations as sw.call_out nodes',
     kind: 'node',
     label: 'sw.call_out',
-    columns: ['id', 'target', 'kind', 'purpose', 'fnId', 'sourceLineStart', 'sourceLineEnd'],
+    columns: ['id', 'code', 'target', 'kind', 'purpose', 'fnId', 'sourceLineStart', 'sourceLineEnd'],
     required: ['id', 'target', 'kind', 'fnId'],
   },
   {
     name: 'biz-extensions',
     description: 'Extension biz items: REQ-SI2-*, UC-SI2-*, FT-SI2-*',
     kind: 'node', // mixed actually; the loader fans rows out by `kind` column
-    columns: ['kind', 'id', 'title', 'summary', 'category', 'reqsExercised', 'reqsImplemented', 'ucsInvolved'],
+    columns: ['kind', 'id', 'code', 'title', 'summary', 'category', 'reqsExercised', 'reqsImplemented', 'ucsInvolved'],
     required: ['kind', 'id', 'title'],
   },
   {
@@ -136,6 +136,7 @@ export function generateCsv(name: string, graph: GraphExport): string | null {
       .filter((n) => n.labels.includes('sw.file'))
       .map((n) => ({
         id: n.id,
+        code: n.properties['code'] ?? '',
         path: n.properties['path'] ?? '',
         repo: n.properties['repo'] ?? '',
         language: n.properties['language'] ?? '',
@@ -149,6 +150,7 @@ export function generateCsv(name: string, graph: GraphExport): string | null {
       .filter((n) => n.labels.includes('sw.function'))
       .map((n) => ({
         id: n.id,
+        code: n.properties['code'] ?? '',
         name: n.properties['name'] ?? '',
         signature: n.properties['signature'] ?? '',
         returnType: n.properties['returnType'] ?? '',
@@ -166,6 +168,7 @@ export function generateCsv(name: string, graph: GraphExport): string | null {
       .filter((n) => n.labels.includes('sw.alt_flow'))
       .map((n) => ({
         id: n.id,
+        code: n.properties['code'] ?? '',
         name: n.properties['name'] ?? '',
         condition: n.properties['condition'] ?? '',
         behavior: n.properties['behavior'] ?? '',
@@ -181,6 +184,7 @@ export function generateCsv(name: string, graph: GraphExport): string | null {
       .filter((n) => n.labels.includes('sw.call_out'))
       .map((n) => ({
         id: n.id,
+        code: n.properties['code'] ?? '',
         target: n.properties['target'] ?? '',
         kind: n.properties['kind'] ?? '',
         purpose: n.properties['purpose'] ?? '',
@@ -204,6 +208,7 @@ export function generateCsv(name: string, graph: GraphExport): string | null {
         rows.push({
           kind: 'req',
           id: reqId ?? n.id,
+          code: n.properties['code'] ?? '',
           title: n.properties['title'] ?? '',
           summary: n.properties['summary'] ?? '',
           category: n.properties['category'] ?? '',
@@ -220,6 +225,7 @@ export function generateCsv(name: string, graph: GraphExport): string | null {
         rows.push({
           kind: 'uc',
           id: ucId ?? n.id,
+          code: n.properties['code'] ?? '',
           title: n.properties['title'] ?? '',
           summary: n.properties['summary'] ?? '',
           category: '',
@@ -239,6 +245,7 @@ export function generateCsv(name: string, graph: GraphExport): string | null {
         rows.push({
           kind: 'ft',
           id: ftId ?? n.id,
+          code: n.properties['code'] ?? '',
           title: n.properties['title'] ?? '',
           summary: n.properties['summary'] ?? '',
           category: '',
@@ -636,6 +643,7 @@ export async function applyMerge(
           if (kind === 'uc') props['ucId'] = id;
           if (kind === 'ft') props['ftId'] = id;
           if (row['category']) props['category'] = row['category'];
+          if (row['code']) props['code'] = row['code'];
           const result = await upsertNode(nodeId, [label, 'BuildSIG'], props);
           if (result === 'created') nodesCreated++;
           else nodesUpdated++;

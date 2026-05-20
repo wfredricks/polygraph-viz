@@ -107,8 +107,24 @@ function nodesByLabel(graph: GraphExport, label: string): string[] {
     .map((n) => n.id);
 }
 
-function findNode(graph: GraphExport, id: string): VizNode | null {
-  return graph.nodes.find((n) => n.id === id) ?? null;
+function findNode(graph: GraphExport, idOrCode: string): VizNode | null {
+  // Direct id match first.
+  const direct = graph.nodes.find((n) => n.id === idOrCode);
+  if (direct) return direct;
+  // Code-via-cache: byCode map is prefetched on boot in main.ts.
+  const byCode = (window as unknown as { __pgvByCode?: Record<string, string> })
+    .__pgvByCode;
+  if (byCode && byCode[idOrCode]) {
+    const id = byCode[idOrCode];
+    return graph.nodes.find((n) => n.id === id) ?? null;
+  }
+  // Property scan (reqId / ucId / ftId / repoName / name).
+  for (const n of graph.nodes) {
+    for (const k of ['reqId', 'ucId', 'ftId', 'repoName', 'name', 'code']) {
+      if (n.properties[k] === idOrCode) return n;
+    }
+  }
+  return null;
 }
 
 /**
@@ -276,9 +292,10 @@ export const COMMANDS: CommandSpec[] = [
       }
       const v = ctx.getView();
       v.setFilter(null);
-      v.focus(id);
-      ctx.setActiveFilter(`focus:${id}`);
-      ctx.echoSystem(`Focused on ${id}.`);
+      v.focus(node.id);
+      const label = node.properties['code'] ?? id;
+      ctx.setActiveFilter(`focus:${label}`);
+      ctx.echoSystem(`Focused on ${label}.`);
     },
   },
   {
@@ -299,9 +316,10 @@ export const COMMANDS: CommandSpec[] = [
       }
       const v = ctx.getView();
       v.setFilter(null);
-      v.focus(id, { transitive: true });
-      ctx.setActiveFilter(`trace:${id}`);
-      ctx.echoSystem(`Tracing reachable subgraph from ${id}.`);
+      v.focus(node.id, { transitive: true });
+      const label = node.properties['code'] ?? id;
+      ctx.setActiveFilter(`trace:${label}`);
+      ctx.echoSystem(`Tracing reachable subgraph from ${label}.`);
     },
   },
   {

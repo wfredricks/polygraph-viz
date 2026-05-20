@@ -43,10 +43,21 @@ export function showNode(node: VizNode): void {
     .join('');
 
   const titleText = pickDisplayName(node);
+  const code = node.properties['code'] as string | undefined;
+  // Surface code + id together when code differs from the title (which
+  // would be the case for files / functions / call-outs whose ids are
+  // pathological but codes are crisp).
+  const idLine =
+    code && code === titleText
+      ? `<p class="node-id-line"><code>${escapeHtml(node.id)}</code></p>`
+      : code
+        ? `<p class="node-id-line"><strong>${escapeHtml(code)}</strong> · <code>${escapeHtml(node.id)}</code></p>`
+        : `<p class="node-id-line"><code>${escapeHtml(node.id)}</code></p>`;
 
   aside.innerHTML = `
     <header>
       <h2>${escapeHtml(titleText)}</h2>
+      ${idLine}
       <p class="labels">${node.labels.map(escapeHtml).join(' · ')}</p>
     </header>
     <table class="props">
@@ -96,6 +107,13 @@ function formatValue(v: unknown): string {
 
 export function pickDisplayName(node: VizNode): string {
   const p = node.properties as Record<string, unknown>;
+  // Prefer the short user-facing code when present (set by the server's
+  // code-generator at boot). Falls back to name/label/summary/title
+  // then to the full id.
+  const code = p['code'];
+  if (typeof code === 'string' && code.length > 0 && code.length <= 40) {
+    return code;
+  }
   const candidate = p['name'] ?? p['label'] ?? p['summary'] ?? p['title'];
   if (typeof candidate === 'string' && candidate.length > 0) {
     return candidate.length > 80 ? candidate.slice(0, 77) + '…' : candidate;
