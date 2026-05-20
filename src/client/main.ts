@@ -20,6 +20,8 @@ import { installTheme } from './ui/theme.js';
 import { installToolbar, type ViewKey } from './ui/toolbar.js';
 import { renderStats } from './ui/stats.js';
 import { renderForce } from './views/force.js';
+import { renderChord } from './views/chord.js';
+import { renderSankey } from './views/sankey.js';
 
 interface AppState {
   graph: GraphExport | null;
@@ -56,12 +58,10 @@ function switchView(view: ViewKey): void {
       renderForce(viz, state.graph);
       break;
     case 'chord':
-      viz.innerHTML =
-        '<p class="placeholder">Chord view — wires up in step G.</p>';
+      renderChord(viz, state.graph);
       break;
     case 'sankey':
-      viz.innerHTML =
-        '<p class="placeholder">Sankey view — wires up in step H.</p>';
+      renderSankey(viz, state.graph);
       break;
   }
 }
