@@ -4,6 +4,26 @@ All notable changes to polygraph-viz follow [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.3.4] — 2026-05-20
+
+### Fixed
+
+- **`/biz`, `/dom`, `/imp` now compute layer slices, not label-set memberships.** v0.3.3 implemented them as pure-label-class filters (e.g. `/biz` = "every node whose primary label is REQ-or-UC-or-feature"). That's the wrong mental model — Bill clarified at 16:04 EDT that segments are layers of a directed pipeline:
+  - biz = requirements → features
+  - dom = features → domain leaves (functions, modules, alt flows, call outs)
+  - imp = paradigm-bound targets
+
+### Added
+
+- **Seam doctrine.** Features live in BOTH biz and dom because they're the bottom of biz AND the top of dom — the natural seam between "what we promise" and "how we build." When functions/modules land in Stage 4+, they'll be in both dom AND imp.
+- **`segmentsForNode(node)`** now returns a `Set<Segment>` (plural). Most nodes inhabit one segment; seam nodes inhabit two.
+- **`sliceSegment(graph, seg)`** computes the Option-C slice: segment members ∪ direction-aware outbound-edge boundary. Boundary follows the pipeline order (biz < dom < imp): only edges whose target is STRICTLY deeper in the pipeline are included. This prevents `/dom` from re-expanding back to biz via features' IMPLEMENTS-edges to REQs.
+- **`/stats` now reports seam count** ("145 biz members, 31 dom members; 16 are seam nodes living in 2 segments").
+
+### Note
+
+For the current SI build SIG (160 nodes, no Tier-3 nodes yet) the direction-aware boundary adds zero nodes — slices ARE just their segment members because there's no deeper layer to expand into yet. Once Stage 4+ produces `cs_2026.*` implementation nodes, `/dom` will naturally extend down into them via the realization edges.
+
 ## [0.3.3] — 2026-05-20
 
 ### Fixed

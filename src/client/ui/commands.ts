@@ -19,7 +19,7 @@
 import type { GraphExport, VizNode } from '../../types.js';
 import type { ViewHandle } from '../views/types.js';
 import type { Segment } from '../../nl/segment.js';
-import { segmentForNode, tallySegments } from '../../nl/segment.js';
+import { segmentForNode, sliceSegment, tallySegments } from '../../nl/segment.js';
 
 export interface CommandContext {
   graph: GraphExport;
@@ -89,8 +89,16 @@ export function exampleForArg(
 
 // ── Helpers ────────────────────────────────────────────────────────
 
-function nodesInSegment(graph: GraphExport, seg: Segment): string[] {
-  return graph.nodes.filter((n) => segmentForNode(n) === seg).map((n) => n.id);
+function nodesInSliceOfSegment(
+  graph: GraphExport,
+  seg: Segment,
+): { ids: string[]; coreCount: number; sliceCount: number } {
+  const { nodeIds, segmentMemberCount } = sliceSegment(graph, seg);
+  return {
+    ids: [...nodeIds],
+    coreCount: segmentMemberCount,
+    sliceCount: nodeIds.size,
+  };
 }
 
 function nodesByLabel(graph: GraphExport, label: string): string[] {
@@ -173,40 +181,44 @@ export const COMMANDS: CommandSpec[] = [
   },
   {
     name: '/biz',
-    description: 'business segment (REQs, UCs, features)',
+    description: 'biz layer: requirements → features + outbound boundary',
     category: 'slice',
     args: [],
     run: (ctx) => {
-      const ids = nodesInSegment(ctx.graph, 'biz');
+      const r = nodesInSliceOfSegment(ctx.graph, 'biz');
       const v = ctx.getView();
       v.focus(null);
-      v.setFilter(ids);
+      v.setFilter(r.ids);
       ctx.setActiveFilter('biz');
-      ctx.echoSystem(`Filtered to biz segment (${ids.length} nodes).`);
+      ctx.echoSystem(
+        `Filtered to biz slice: ${r.coreCount} core nodes (REQs/UCs/features) + outbound boundary = ${r.sliceCount} total.`,
+      );
     },
   },
   {
     name: '/dom',
-    description: 'domain segment (functions, modules, alt flows)',
+    description: 'dom layer: features → leaves + outbound boundary',
     category: 'slice',
     args: [],
     run: (ctx) => {
-      const ids = nodesInSegment(ctx.graph, 'dom');
+      const r = nodesInSliceOfSegment(ctx.graph, 'dom');
       const v = ctx.getView();
       v.focus(null);
-      v.setFilter(ids);
+      v.setFilter(r.ids);
       ctx.setActiveFilter('dom');
-      ctx.echoSystem(`Filtered to dom segment (${ids.length} nodes).`);
+      ctx.echoSystem(
+        `Filtered to dom slice: ${r.coreCount} core nodes (features/repos/stages/...) + outbound boundary = ${r.sliceCount} total.`,
+      );
     },
   },
   {
     name: '/imp',
-    description: 'implementation segment (cs_2026, sn_, next_, ...)',
+    description: 'imp layer: paradigm-bound targets (cs_2026, sn_, next_, ...)',
     category: 'slice',
     args: [],
     run: (ctx) => {
-      const ids = nodesInSegment(ctx.graph, 'imp');
-      if (ids.length === 0) {
+      const r = nodesInSliceOfSegment(ctx.graph, 'imp');
+      if (r.coreCount === 0) {
         ctx.echoSystem(
           'No implementation nodes yet — Tier-3 (cs_2026.* etc) gets populated in build Stage 4+.',
         );
@@ -214,9 +226,11 @@ export const COMMANDS: CommandSpec[] = [
       }
       const v = ctx.getView();
       v.focus(null);
-      v.setFilter(ids);
+      v.setFilter(r.ids);
       ctx.setActiveFilter('imp');
-      ctx.echoSystem(`Filtered to imp segment (${ids.length} nodes).`);
+      ctx.echoSystem(
+        `Filtered to imp slice: ${r.coreCount} core nodes + outbound boundary = ${r.sliceCount} total.`,
+      );
     },
   },
   {
@@ -360,7 +374,8 @@ export const COMMANDS: CommandSpec[] = [
         .join(', ');
       ctx.echoSystem(
         `**Graph stats** — ${ctx.graph.nodes.length} nodes, ${ctx.graph.edges.length} edges. ` +
-          `Segments: biz ${seg.biz}, dom ${seg.dom}, imp ${seg.imp}, meta ${seg.meta}. ` +
+          `Segment members: biz ${seg.biz}, dom ${seg.dom}, imp ${seg.imp}, meta ${seg.meta} ` +
+          `(${seg.seams} are seam nodes living in 2 segments). ` +
           `Top labels: ${top}.`,
       );
     },

@@ -1,25 +1,38 @@
 /**
  * Segment classifier — biz / dom / imp / meta.
  *
- * Honors Bill's monikers from 2026-05-20 14:53 EDT:
- *   1. The business end (biz) is the end from requirements on down to
- *      features. Contains the business concerns that are mapped/traced to.
- *   2. The domain end (dom) is the end from features on down to functions,
- *      alternative flows, and call outs. The implementation-agnostic part
- *      of the SIG equation.
- *   3. The implementation end (imp) is the end that identifies the
- *      implementation targets (e.g., TypeScript, Service Now, Appian).
+ * Honors Bill's monikers from 2026-05-20 14:53 EDT + the layer-with-
+ * boundary refinement from 2026-05-20 16:09 EDT (Option C):
  *
- * Architectural note: features straddle biz and dom. Per Bill's framing
- * features are the entry point of the BIZ side ("what we promise" face).
- * The DOM side starts at sw.function, sw.module, sw.endpoint, sw.test.
+ *   1. The business end (biz) — requirements through features. Business
+ *      concerns being mapped/traced to.
+ *   2. The domain end (dom) — features through domain leaves (functions,
+ *      modules, alternative flows, call outs). Implementation-agnostic.
+ *   3. The implementation end (imp) — paradigm-bound targets
+ *      (TypeScript / ServiceNow / Appian / Next.js / ...).
  *
- * Pure function — no DOM, no graph mutations. Importable from client
+ * Seam doctrine: features live in BOTH biz and dom. Functions/modules
+ * (when they exist) will live in BOTH dom and imp. Segments are not
+ * disjoint partitions of the label set — they are pipeline layers that
+ * overlap at the seams. The classifier returns a Set<Segment> per node
+ * so a single feature is correctly { biz, dom } simultaneously.
+ *
+ * Slice semantics (used by /biz, /dom, /imp commands):
+ *   slice(segment) =
+ *     {nodes with segment ∈ segments(node)}
+ *     ∪
+ *     {nodes any slice-resident node points to with an outgoing edge}
+ *
+ * This includes the OUTBOUND-edge boundary so a /biz slice ending at
+ * features shows "what those features promise" via their connections
+ * down into dom. Symmetric for /dom into imp.
+ *
+ * Pure functions — no DOM, no graph mutations. Importable from client
  * renderers (filter views) AND from server endpoints (NL query
  * "in the biz segment" routing).
  */
 
-import type { VizNode } from '../types.js';
+import type { GraphExport, VizNode } from '../types.js';
 
 export type Segment = 'biz' | 'dom' | 'imp' | 'meta';
 
@@ -33,33 +46,44 @@ function primaryLabel(labels: string[]): string {
 }
 
 /**
- * Classify a node into one of the four segments.
- *
- * The rule is label-driven (not Tier-property-driven) because Bill's
- * monikers slice features off from Tier-2 — they share Tier with
- * sw.use_case but live in different segments (features = biz, use_cases =
- * also biz here since they describe what the business needs).
+ * Classify a node into the set of segments it inhabits. Most nodes are
+ * in exactly one segment; seam nodes (features today; functions/modules
+ * when they exist) are in two.
  */
-export function segmentForNode(node: VizNode): Segment {
+export function segmentsForNode(node: VizNode): Set<Segment> {
   const primary = primaryLabel(node.labels);
 
   // Tier 3 paradigm-bound labels = implementation segment.
-  // Recognized prefixes: cs_ (current C# 2026), sn_ (ServiceNow),
-  // next_ (Next.js), appian_ (Appian), java_, py_, etc. The leading
-  // pattern is <namespace>_<era>.<element>.
-  if (
-    primary.startsWith('cs_') ||
-    primary.startsWith('sn_') ||
-    primary.startsWith('next_') ||
-    primary.startsWith('appian_') ||
-    primary.startsWith('java_') ||
-    primary.startsWith('py_') ||
-    primary.startsWith('cobol_')
-  ) {
-    return 'imp';
+  // Future-proof prefix set; the methodology anticipates more.
+  for (const pre of ['cs_', 'sn_', 'next_', 'appian_', 'java_', 'py_', 'cobol_']) {
+    if (primary.startsWith(pre)) return new Set(['imp']);
   }
 
-  // Business end — requirements, use cases, features, findings, risks.
+  // The biz–dom seam: features are the bottom of biz AND the top of dom.
+  // They're how business intent enters implementation. Both segments
+  // include them so /biz and /dom both render features.
+  if (primary === 'sw.feature') return new Set(['biz', 'dom']);
+
+  // The dom–imp seam: when functions/modules land (Stage 4+), they will
+  // be both dom (the implementation-agnostic shape) and imp (the actual
+  // realized code in a specific paradigm). For now these labels exist
+  // as forward declarations; current graphs have no instances.
+  if (
+    primary === 'sw.function' ||
+    primary === 'sw.module' ||
+    primary === 'sw.class' ||
+    primary === 'sw.interface' ||
+    primary === 'sw.endpoint' ||
+    primary === 'sw.test' ||
+    primary === 'sw.cli_command' ||
+    primary === 'sw.audit_event' ||
+    primary === 'sw.workflow' ||
+    primary === 'sw.dependency_edge'
+  ) {
+    return new Set(['dom', 'imp']);
+  }
+
+  // Pure biz layer — requirements, use cases, findings, risks, constraints.
   switch (primary) {
     case 'intended_behavior':
     case 'constraint':
@@ -67,51 +91,133 @@ export function segmentForNode(node: VizNode): Segment {
     case 'finding':
     case 'risk_item':
     case 'sw.use_case':
-    case 'sw.feature':
-      return 'biz';
+      return new Set(['biz']);
   }
 
-  // Domain end — implementation-agnostic shape of HOW things are built.
-  // sw.repo + sw.stage capture build planning; sw.function / module /
-  // endpoint / test / class / audit_event / workflow capture
-  // architectural shape that survives a paradigm rotation.
+  // Pure dom layer — build-planning nodes (repos, stages, types).
+  // These describe how we organize the build; they're paradigm-agnostic
+  // but they're not biz concerns.
   switch (primary) {
     case 'sw.repo':
     case 'sw.stage':
-    case 'sw.module':
-    case 'sw.function':
-    case 'sw.class':
-    case 'sw.interface':
     case 'sw.type':
-    case 'sw.test':
-    case 'sw.endpoint':
-    case 'sw.cli_command':
     case 'sw.compose_service':
-    case 'sw.audit_event':
-    case 'sw.workflow':
-    case 'sw.dependency_edge':
-      return 'dom';
+      return new Set(['dom']);
   }
 
-  // Anything we haven't named explicitly defaults to 'meta'.
-  return 'meta';
+  // Anything we haven't named explicitly defaults to meta.
+  return new Set(['meta']);
 }
 
 /**
- * Tally a graph's segment distribution. Used by the legend, /api/segments,
- * and the /stats command's chat output.
+ * Convenience for callers that want a single segment (the first one
+ * found, in biz / dom / imp / meta order). Used by the legend and
+ * by /stats for headline counts.
+ *
+ * For seam nodes the choice is biz < dom < imp < meta; features
+ * therefore report as 'biz' here. UI elements that need accurate seam
+ * representation (e.g. node coloring) should call segmentsForNode()
+ * instead and handle the multi-segment case explicitly.
  */
+export function segmentForNode(node: VizNode): Segment {
+  const segs = segmentsForNode(node);
+  if (segs.has('biz')) return 'biz';
+  if (segs.has('dom')) return 'dom';
+  if (segs.has('imp')) return 'imp';
+  return 'meta';
+}
+
 export interface SegmentCounts {
   biz: number;
   dom: number;
   imp: number;
   meta: number;
+  /** How many nodes inhabit MORE THAN ONE segment (seam nodes). */
+  seams: number;
 }
 
 export function tallySegments(nodes: VizNode[]): SegmentCounts {
-  const counts: SegmentCounts = { biz: 0, dom: 0, imp: 0, meta: 0 };
+  const counts: SegmentCounts = { biz: 0, dom: 0, imp: 0, meta: 0, seams: 0 };
   for (const n of nodes) {
-    counts[segmentForNode(n)]++;
+    const segs = segmentsForNode(n);
+    if (segs.has('biz')) counts.biz++;
+    if (segs.has('dom')) counts.dom++;
+    if (segs.has('imp')) counts.imp++;
+    if (segs.has('meta')) counts.meta++;
+    if (segs.size > 1) counts.seams++;
   }
   return counts;
+}
+
+/**
+ * Pipeline ordering. biz < dom < imp, with meta sitting outside the
+ * pipeline (and therefore never participating in down-the-pipeline
+ * boundary expansion).
+ */
+const SEGMENT_DEPTH: Record<Segment, number> = {
+  biz: 0,
+  dom: 1,
+  imp: 2,
+  meta: -1, // sentinel; never selected as a strictly-below target
+};
+
+/**
+ * Compute the node-id set for an Option-C slice of a single segment.
+ *
+ * Returns nodes whose segment set contains `seg`, plus nodes any
+ * slice-resident node points to via an OUTGOING edge whose TARGET is
+ * strictly DEEPER in the pipeline (biz < dom < imp). This is the
+ * "what this layer promises" boundary, directional by pipeline depth.
+ *
+ * Why direction-aware: a feature has outgoing edges in two
+ * directions — IMPLEMENTS edges to REQs (up, biz), and (future)
+ * realization edges to functions (down, dom∪imp). A naive "any
+ * outgoing edge" boundary for /dom would re-include all REQs +
+ * UCs via features' IMPLEMENTS edges, effectively expanding the
+ * /dom slice back to the full graph. Direction-by-depth keeps the
+ * slice honest: /dom extends down to imp, not back up to biz.
+ *
+ * For a multi-segment node (e.g. a feature in {biz, dom}), its
+ * "effective depth" is the MAX of its segment depths, so down-the-
+ * pipeline boundary correctly originates from the bottom of its
+ * span. Without this, a feature in a /biz slice would expand its
+ * boundary as if it were a pure biz node and miss its dom-facing
+ * outgoing edges.
+ */
+export function sliceSegment(
+  graph: GraphExport,
+  seg: Segment,
+): { nodeIds: Set<string>; segmentMemberCount: number } {
+  const segmentMembers = new Set<string>();
+  for (const n of graph.nodes) {
+    if (segmentsForNode(n).has(seg)) {
+      segmentMembers.add(n.id);
+    }
+  }
+
+  // Index node -> its effective pipeline depth (max of its segments).
+  const nodeDepth = new Map<string, number>();
+  for (const n of graph.nodes) {
+    let maxDepth = -1;
+    for (const s of segmentsForNode(n)) {
+      const d = SEGMENT_DEPTH[s];
+      if (d > maxDepth) maxDepth = d;
+    }
+    nodeDepth.set(n.id, maxDepth);
+  }
+
+  const sliceDepth = SEGMENT_DEPTH[seg];
+  const slice = new Set<string>(segmentMembers);
+  for (const e of graph.edges) {
+    if (!segmentMembers.has(e.fromId)) continue;
+    const targetDepth = nodeDepth.get(e.toId) ?? -1;
+    // Boundary: target is STRICTLY below the slice in the pipeline.
+    // Why strict: a feature->REQ edge from a feature (depth 1, since
+    // it's {biz,dom}) to a REQ (depth 0, biz) would otherwise be
+    // included by `>=` and re-expand /dom back to biz.
+    if (targetDepth > sliceDepth) {
+      slice.add(e.toId);
+    }
+  }
+  return { nodeIds: slice, segmentMemberCount: segmentMembers.size };
 }
