@@ -57,6 +57,52 @@ export interface VizConfig {
    * a downstream product (e.g. `--title "Solution Intel"`).
    */
   title?: string;
+  /**
+   * Enable natural-language search + chat. When set, the server
+   * provisions an LLM provider for embedding queries, ranking
+   * candidates, and narrating answers. The default is `off` (no LLM
+   * calls, no NL features).
+   *
+   * Currently only `bedrock` is supported. Adding other providers
+   * (openai, anthropic-direct, ollama) is a v0.4 candidate.
+   */
+  nlSearch?: 'off' | 'bedrock';
+  /**
+   * AWS profile to use for Bedrock when `nlSearch: 'bedrock'`. Standard
+   * AWS SDK profile resolution applies; defaults to `default`.
+   */
+  awsProfile?: string;
+  /**
+   * AWS region for Bedrock when `nlSearch: 'bedrock'`. Defaults to
+   * `us-east-1` (where most Anthropic Bedrock models live).
+   */
+  awsRegion?: string;
+  /**
+   * Bedrock model id for the LLM ranker + narrator. Defaults to
+   * `anthropic.claude-haiku-4-5-20251001-v1:0` — a fast, cheap,
+   * sufficient model for graph-grounded answers.
+   */
+  bedrockLlmModel?: string;
+  /**
+   * Bedrock model id for text embeddings. Defaults to
+   * `amazon.titan-embed-text-v2:0` (1024-dim, fast, cheap).
+   */
+  bedrockEmbedModel?: string;
+  /**
+   * Path to a lexicon JSON file mapping common-language terms to graph
+   * vocabulary (e.g. `{ "auth": "authentication identity bangauth" }`).
+   * When the path is unset, a built-in per-domain lexicon is used,
+   * selected by inspecting the graph's Tier-2 label prefixes
+   * (`sw.*`, `ba.*`, etc.).
+   */
+  lexiconPath?: string;
+  /**
+   * Path to a knowledge-base JSON file holding Save-This entries from
+   * past chat turns. The KB is appended to as the user clicks Save This.
+   * When unset, defaults to `<dataDir>/kb.json` for path mode or an
+   * in-memory KB for URL / demo mode.
+   */
+  kbPath?: string;
   /** Theme configuration */
   theme?: ThemeConfig;
   /** Default layout mode */

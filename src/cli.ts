@@ -58,6 +58,29 @@ function parseArgs(argv: string[]): VizConfig {
         // brand the embed without forking the viewer source.
         config.title = args[++i];
         break;
+      case '--nl-search':
+        // Why: opt-in NL features. Off by default so embedders without
+        // an LLM key are unaffected.
+        config.nlSearch = (args[++i] as 'off' | 'bedrock' | undefined) ?? 'off';
+        break;
+      case '--aws-profile':
+        config.awsProfile = args[++i];
+        break;
+      case '--aws-region':
+        config.awsRegion = args[++i];
+        break;
+      case '--bedrock-llm-model':
+        config.bedrockLlmModel = args[++i];
+        break;
+      case '--bedrock-embed-model':
+        config.bedrockEmbedModel = args[++i];
+        break;
+      case '--lexicon':
+        config.lexiconPath = args[++i];
+        break;
+      case '--kb':
+        config.kbPath = args[++i];
+        break;
       default:
         // Why: forward-compat — silently ignore unknown flags so an older
         // CLI keeps working when a newer wrapper adds options.
@@ -84,7 +107,18 @@ async function main(): Promise<void> {
   }
 
   const graphData = await loadGraph(config);
-  const app = buildApp(graphData, { title: config.title });
+  const app = buildApp(graphData, {
+    title: config.title,
+    nl: {
+      provider: config.nlSearch ?? 'off',
+      awsProfile: config.awsProfile,
+      awsRegion: config.awsRegion,
+      llmModel: config.bedrockLlmModel,
+      embedModel: config.bedrockEmbedModel,
+      lexiconPath: config.lexiconPath,
+      kbPath: config.kbPath,
+    },
+  });
 
   const port = config.port ?? 4444;
   serve({ fetch: app.fetch, port }, () => {
