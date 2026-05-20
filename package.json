@@ -1,6 +1,6 @@
 {
   "name": "polygraph-viz",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Browser-based graph visualizer for PolyGraph \u2014 see your data",
   "author": "William Fredricks",
   "license": "Apache-2.0",

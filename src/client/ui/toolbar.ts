@@ -3,6 +3,11 @@
  *
  * Theme toggle lives in theme.ts because it owns its own storage; toolbar
  * here only owns view selection and search debouncing.
+ *
+ * Slash-prefix carve-out: when the search input starts with `/`, the
+ * command palette intercepts. The literal-substring onSearch handler
+ * does not fire. This keeps the parser logic in commands.ts (the single
+ * source of truth) and the toolbar dumb about commands.
  */
 
 export type ViewKey = 'force' | 'chord' | 'sankey';
@@ -33,6 +38,14 @@ export function installToolbar(handlers: ToolbarHandlers): void {
   if (search) {
     let t: number | undefined;
     search.addEventListener('input', () => {
+      // Slash carve-out: when the input starts with /, the command
+      // palette owns the input. Clear any active search filter and
+      // skip the substring handler.
+      if (search.value.startsWith('/')) {
+        handlers.onSearch('');
+        if (t !== undefined) window.clearTimeout(t);
+        return;
+      }
       // Why: debounce so we do not run a filter on every keystroke
       // when a graph has thousands of nodes.
       if (t !== undefined) window.clearTimeout(t);

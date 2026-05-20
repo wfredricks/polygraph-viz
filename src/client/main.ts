@@ -29,6 +29,8 @@ import { renderSankey } from './views/sankey.js';
 import type { ViewHandle } from './views/types.js';
 import { NULL_HANDLE } from './views/types.js';
 import { installChat } from './ui/chat.js';
+import { installCommandPalette } from './ui/command-palette.js';
+import type { CommandContext } from './ui/commands.js';
 
 interface AppState {
   /** The graph currently being rendered. May be the full /api/graph snapshot or a subgraph. */
@@ -42,6 +44,39 @@ interface AppState {
   currentView: ViewKey;
   currentHandle: ViewHandle;
   currentSearch: string;
+  /** Active slash-command filter, e.g. 'biz', 'label:sw.feature', 'focus:req:REQ-SI-001'. */
+  activeFilter: string | null;
+}
+
+/**
+ * Echo a system-style line into the chat drawer log. If the drawer
+ * is not installed, the line is dropped (with a console.info for
+ * debugging). Used by slash-command runners via CommandContext.
+ */
+function echoToChat(text: string): void {
+  const logEl = document.querySelector('#chat-drawer .chat-log');
+  if (!logEl) {
+    // Drawer not present; for /help and /stats output it's worth a
+    // console.info so a user without the chat enabled can still see
+    // the command result.
+    // eslint-disable-next-line no-console
+    console.info('[cmd]', text);
+    return;
+  }
+  const sysMsg = document.createElement('div');
+  sysMsg.className = 'chat-msg chat-msg-system';
+  // Render minimal markdown (bold + code spans).
+  let html = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\n/g, '<br>');
+  sysMsg.innerHTML = html;
+  logEl.appendChild(sysMsg);
+  // Auto-scroll to bottom.
+  logEl.scrollTop = logEl.scrollHeight;
 }
 
 const state: AppState = {
@@ -52,6 +87,7 @@ const state: AppState = {
   currentView: 'force',
   currentHandle: NULL_HANDLE,
   currentSearch: '',
+  activeFilter: null,
 };
 
 async function fetchGraph(): Promise<GraphExport> {
@@ -120,6 +156,33 @@ function refreshStatusLine(): void {
     void renderStats(state.graph);
   }
   ensureSubgraphPill();
+  ensureFilterPill();
+}
+
+/**
+ * Show / hide the "Filter: biz" pill in the stats footer based on whether
+ * a slash-command filter is currently active.
+ */
+function ensureFilterPill(): void {
+  const stats = document.getElementById('stats');
+  if (!stats) return;
+  let pill = document.getElementById('filter-pill');
+  if (state.activeFilter) {
+    if (!pill) {
+      pill = document.createElement('button');
+      pill.id = 'filter-pill';
+      pill.setAttribute('type', 'button');
+      pill.addEventListener('click', () => {
+        state.activeFilter = null;
+        state.currentHandle.focus(null);
+        ensureFilterPill();
+      });
+      stats.appendChild(pill);
+    }
+    pill.textContent = `× Filter: ${state.activeFilter}`;
+  } else if (pill) {
+    pill.remove();
+  }
 }
 
 /**
@@ -190,8 +253,38 @@ async function boot(): Promise<void> {
     refreshStatusLine();
     switchView(state.currentView);
 
-    // Install the chat drawer if the server enabled NL. Off-by-default
-    // so embedders without an LLM are unaffected.
+    // Build the slash-command context once. The palette reuses it.
+    const ctx: CommandContext = {
+      get graph() {
+        return state.graph ?? state.fullGraph!;
+      },
+      getView: () => state.currentHandle,
+      echoSystem: (text: string) => {
+        // The chat drawer subscribes; if it's not installed, log to console
+        // and overlay nothing.
+        echoToChat(text);
+      },
+      switchView: (view) => switchView(view),
+      setActiveFilter: (label) => {
+        state.activeFilter = label;
+        refreshStatusLine();
+      },
+    };
+
+    // Install palette on the toolbar search input. Works whether or
+    // not NL is on; commands are graph operations, no LLM required.
+    const searchEl = document.getElementById('search') as HTMLInputElement | null;
+    if (searchEl) {
+      installCommandPalette({
+        input: searchEl,
+        ctx,
+        onRun: () => {
+          /* searchEl is cleared by the palette after a successful run */
+        },
+      });
+    }
+
+    // Install the chat drawer if the server enabled NL.
     try {
       const cfg = await fetch('/api/config').then((r) => r.json() as Promise<{
         nlEnabled?: boolean;
@@ -206,6 +299,19 @@ async function boot(): Promise<void> {
             void showSubgraph(citedNodes, title);
           },
         });
+        // Wire the chat textarea to the palette too.
+        const chatInput = document.querySelector('#chat-drawer .chat-input') as
+          | HTMLTextAreaElement
+          | null;
+        if (chatInput) {
+          installCommandPalette({
+            input: chatInput,
+            ctx,
+            onRun: () => {
+              /* chat input cleared by palette */
+            },
+          });
+        }
       }
     } catch (err) {
       console.warn('chat drawer: config fetch failed', err);

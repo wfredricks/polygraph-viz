@@ -4,6 +4,22 @@ All notable changes to polygraph-viz follow [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.3.2] — 2026-05-20
+
+### Added
+
+- **Slash-command palette** — type `/` in the toolbar search input or the chat textarea to open a combo-style dropdown listing every command, its description, and its category (slice / focus / reflect). Type to filter by name. Click the `/` chevron next to either input to open the palette without typing.
+- **Argument coaching** — when a command requires an argument, the palette shows an "argument hint" with **graph-grounded examples** (`Try: /label sw.feature` listed from the actual labels in the current graph, not generic). The user types a partial argument and the palette becomes a type-ahead autocomplete sourced from the live graph.
+- **biz / dom / imp / meta segment classifier** (`src/nl/segment.ts`) — pure function, importable client + server, classifies each node into one of four segments by primary label. Tier-3 paradigm-bound labels (`cs_*`, `sn_*`, `next_*`, `appian_*`, etc) → imp; REQs + UCs + features → biz; sw.function / module / endpoint / test / class / repo / stage → dom; everything else → meta.
+- **11 commands** — `/all`, `/biz`, `/dom`, `/imp`, `/label <name>`, `/focus <id>`, `/trace <id>`, `/path <a> <b>`, `/hubs <N>`, `/stats`, `/help`.
+- **Active filter pill** in the stats footer — when a slash command applies a filter, a `× Filter: biz`-style pill shows. Click it to clear.
+- **Command echo** — every slash-command run drops a system-style message into the chat drawer ("Filtered to biz segment (145 nodes).") so the user sees how the system interpreted their command. Trust-foundation; surfaces silent behavior.
+
+### Changed
+
+- Toolbar search input now treats a leading `/` as a slash-command and skips the literal-substring search handler for that input.
+- `ViewHandle.focus()` accepts `string[]` (introduced in v0.3.1) is now also called by the slice / focus / hubs / path commands.
+
 ## [0.3.1] — 2026-05-20
 
 ### Added
