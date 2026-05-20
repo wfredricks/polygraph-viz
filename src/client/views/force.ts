@@ -35,7 +35,7 @@ import {
   type SimulationLinkDatum,
 } from 'd3-force';
 import type { GraphExport, VizNode, VizEdge } from '../../types.js';
-import { colorForLabel, primaryLabel } from '../ui/palette.js';
+import { buildColorMap, primaryLabel } from '../ui/palette.js';
 import {
   showNode,
   showEdge,
@@ -78,6 +78,10 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
     properties: n.properties,
     primary: primaryLabel(n.labels),
   }));
+
+  // Build a per-render color map (collision-free for ≤16 distinct labels).
+  // Used both for node fill AND for the on-canvas legend.
+  const colorMap = buildColorMap(graph.nodes);
 
   const nodeById = new Map(nodes.map((n) => [n.id, n]));
   const vizById = new Map(graph.nodes.map((n) => [n.id, n]));
@@ -172,7 +176,7 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
     .append('circle')
     .attr('class', 'node-circle')
     .attr('r', 7)
-    .attr('fill', (d) => colorForLabel(d.primary))
+    .attr('fill', (d) => colorMap.colorForLabel(d.primary))
     .attr('stroke-width', 0.8);
 
   nodeSel
@@ -247,7 +251,12 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
   // Click a node → dim everything except the connected constellation
   // (direct neighbors by default; transitive subgraph with Shift-click).
   // Click the same node again → clear. Click empty space → clear. ESC → clear.
-  let focused: { id: string; transitive: boolean } | null = null;
+  // focused.id  : single-node focus (constellation around that node)
+  // focused.byLabel : label-class focus (highlight every node of that label)
+  // The two are mutually exclusive at click time but share the same applyFocus.
+  let focused:
+    | { id: string; transitive: boolean; byLabel?: string }
+    | null = null;
 
   function computeFocusSet(nodeId: string, transitive: boolean): Set<string> {
     if (!transitive) {
@@ -289,15 +298,25 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
         .style('pointer-events', 'auto');
       return;
     }
-    const focusSet = computeFocusSet(focused.id, focused.transitive);
+    let focusSet: Set<string>;
+    if (focused.byLabel) {
+      // Label-class focus: highlight every node whose primary label matches.
+      focusSet = new Set<string>();
+      for (const n of nodes) {
+        if (n.primary === focused.byLabel) focusSet.add(n.id);
+      }
+    } else {
+      focusSet = computeFocusSet(focused.id, focused.transitive);
+    }
     const accent =
       getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() ||
       '#7aa2ff';
+    const anchorId = focused.id; // empty string when byLabel
     nodeSel
       .style('opacity', (d) => (focusSet.has(d.id) ? 1 : 0.12))
       .select<SVGCircleElement>('circle')
       .attr('stroke-width', (d) =>
-        d.id === focused!.id ? 3 : focusSet.has(d.id) ? 1.6 : 0.8,
+        d.id === anchorId ? 3 : focusSet.has(d.id) ? 1.6 : 0.8,
       )
       .attr('stroke', (d) => (focusSet.has(d.id) ? accent : null));
     linkSel.style('opacity', (d) => {
@@ -313,6 +332,45 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
         return focusSet.has(s) && focusSet.has(t) ? 'auto' : 'none';
       });
   }
+
+  // ── Legend ─────────────────────────────────────────────────
+  // Why an HTML overlay (not an SVG <g>): HTML gives us free
+  // accessibility (a real list of buttons), text wrapping, and easy
+  // theming via CSS variables. SVG-rendered legends require manual
+  // measurement and layout.
+  const legend = document.createElement('div');
+  legend.className = 'force-legend';
+  legend.setAttribute('aria-label', 'Node color legend');
+  for (const entry of colorMap.entries) {
+    const row = document.createElement('button');
+    row.className = 'legend-row';
+    row.type = 'button';
+    row.title = `${entry.count} ${entry.label} node${entry.count === 1 ? '' : 's'} — click to focus`;
+    const swatch = document.createElement('span');
+    swatch.className = 'legend-swatch';
+    swatch.style.backgroundColor = entry.color;
+    const label = document.createElement('span');
+    label.className = 'legend-label';
+    label.textContent = entry.label;
+    const count = document.createElement('span');
+    count.className = 'legend-count';
+    count.textContent = String(entry.count);
+    row.appendChild(swatch);
+    row.appendChild(label);
+    row.appendChild(count);
+    row.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      // Toggle: if this label is already the focus filter, clear it.
+      if (focused && focused.byLabel === entry.label) {
+        focused = null;
+      } else {
+        focused = { id: '', byLabel: entry.label, transitive: false };
+      }
+      applyFocus();
+    });
+    legend.appendChild(row);
+  }
+  container.appendChild(legend);
 
   nodeSel.on('click', (event: MouseEvent, d) => {
     const viz = vizById.get(d.id);
@@ -421,6 +479,7 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
       ro.disconnect();
       sim.stop();
       svg.remove();
+      legend.remove();
       clearInspector();
       document.removeEventListener('keydown', escHandler);
     },

@@ -4,6 +4,18 @@ All notable changes to polygraph-viz follow [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.2.5] — 2026-05-20
+
+### Fixed
+
+- **Color palette collisions in Force view.** v0.2.4 and earlier used FNV-1a hash of the label name modulo a 12-color palette, which produced visible collisions even on small graphs. In the SI build SIG: `sw.feature` and `sw.stage` both landed on light purple; `intended_behavior`, `Role`, and `Narrative` all landed on orange. Bill reported this 2026-05-20 10:18 EDT.
+
+### Added
+
+- **Collision-free color assignment.** Colors are now assigned by ORDER-OF-FIRST-APPEARANCE into a 16-color palette (Okabe-Ito 8 + 8 extension hues). Labels are sorted alphabetically before assignment so the result is stable across reloads of the same graph. Zero collisions guaranteed when distinct-label-count ≤ 16; for >16 labels, falls back to an HSL hue rotation that distributes evenly around the wheel.
+- **Force view legend.** A floating panel in the top-right of the Force view lists every label with its color swatch and node count, sorted by count descending. The legend is built per-render from the actual graph data (no hard-coded labels). Hover a row to highlight. **Click a row to focus all nodes of that label** — clicking the same row again clears.
+- New `buildColorMap(nodes)` helper in `ui/palette.ts` returns `{ colorForLabel, entries }`. The legacy `colorForLabel(label)` is kept as a deprecated fallback for Sankey/Chord paths that don't yet thread a full ColorMap.
+
 ## [0.2.4] — 2026-05-20
 
 ### Added
