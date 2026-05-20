@@ -1,68 +1,141 @@
 /*
- * polygraph-viz — base layout + theme palette.
+ * polygraph-viz — design tokens + layout.
  *
- * Step B places only the shell styles. The full palette + light/dark
- * tokens land in step D.
+ * The palette is driven by CSS custom properties on :root, with [data-theme]
+ * overrides that swap the entire palette atomically. The renderers reference
+ * --edge, --ink, --bg, etc. directly via SVG attributes like
+ * fill="var(--ink)", so a theme flip cascades into the graph without
+ * re-rendering anything.
+ *
+ * Tokens deliberately match the proposal doc (2026-05-20-06-55-polygraph-viz-d3-plan.md).
  */
 
-* { box-sizing: border-box; margin: 0; padding: 0; }
+:root,
+:root[data-theme='dark'] {
+  --bg: #0e1019;
+  --panel: #1a1d2e;
+  --panel-2: #232842;
+  --ink: #e6e8f2;
+  --muted: #8a8fa3;
+  --edge: #3a3f55;
+  --border: #2a2e44;
+  --accent: #7aa2ff;
+  --accent-ink: #0e1019;
+  --error: #ff6b81;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
 
-html, body, #app { height: 100%; }
+:root[data-theme='light'] {
+  --bg: #fafafa;
+  --panel: #ffffff;
+  --panel-2: #f0f2f7;
+  --ink: #1a1d2e;
+  --muted: #5a5f73;
+  --edge: #cdd1de;
+  --border: #e2e5ee;
+  --accent: #3b6dd6;
+  --accent-ink: #ffffff;
+  --error: #cc2244;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Inter', sans-serif;
+  font-family:
+    -apple-system,
+    BlinkMacSystemFont,
+    'Inter',
+    'Segoe UI',
+    sans-serif;
   font-size: 13px;
-  background: #0e1019;
-  color: #e6e8f2;
+  background: var(--bg);
+  color: var(--ink);
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
 }
 
 #app {
   display: grid;
   grid-template-rows: auto 1fr auto;
+  height: 100vh;
 }
+
+/* ── Toolbar ────────────────────────────────────────────────── */
 
 #toolbar {
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 8px 14px;
-  background: #1a1d2e;
-  border-bottom: 1px solid #2a2e44;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
 }
 
 #toolbar h1 {
   font-size: 14px;
   font-weight: 600;
   margin-right: 12px;
+  color: var(--ink);
+}
+
+#view-tabs {
+  display: flex;
+  gap: 4px;
 }
 
 #view-tabs button,
 #theme-toggle {
   background: transparent;
-  border: 1px solid #3a3f55;
-  color: #e6e8f2;
+  border: 1px solid var(--border);
+  color: var(--ink);
   padding: 4px 10px;
   font: inherit;
   cursor: pointer;
   border-radius: 4px;
+  transition:
+    background-color 80ms ease,
+    border-color 80ms ease;
+}
+
+#view-tabs button:hover,
+#theme-toggle:hover {
+  background: var(--panel-2);
 }
 
 #view-tabs button.active {
-  background: #7aa2ff;
-  border-color: #7aa2ff;
-  color: #0e1019;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
 }
 
 #search {
   flex: 1;
   max-width: 320px;
-  background: #0e1019;
-  border: 1px solid #3a3f55;
-  color: #e6e8f2;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--ink);
   padding: 4px 10px;
   border-radius: 4px;
   font: inherit;
 }
+
+#search::placeholder {
+  color: var(--muted);
+}
+
+/* ── Main ───────────────────────────────────────────────────── */
 
 main {
   display: grid;
@@ -73,23 +146,89 @@ main {
 #viz {
   position: relative;
   overflow: hidden;
+  background: var(--bg);
+}
+
+#viz svg {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .placeholder {
   padding: 24px;
-  color: #8a8fa3;
+  color: var(--muted);
 }
 
-#inspector {
-  border-left: 1px solid #2a2e44;
-  padding: 12px;
-  overflow: auto;
+.placeholder.error {
+  color: var(--error);
 }
+
+/* ── Inspector ──────────────────────────────────────────────── */
+
+#inspector {
+  border-left: 1px solid var(--border);
+  padding: 14px;
+  overflow: auto;
+  background: var(--panel);
+}
+
+#inspector[hidden] {
+  display: none;
+}
+
+#inspector header h2 {
+  font-size: 14px;
+  margin-bottom: 4px;
+  color: var(--ink);
+  word-break: break-word;
+}
+
+#inspector .labels {
+  color: var(--muted);
+  font-size: 11px;
+  margin-bottom: 12px;
+}
+
+#inspector table.props {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+#inspector table.props th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 500;
+  border-bottom: 1px solid var(--border);
+  padding: 4px 6px;
+}
+
+#inspector table.props td {
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+  word-break: break-word;
+}
+
+#inspector table.props td:first-child {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* ── Footer stats ───────────────────────────────────────────── */
 
 #stats {
   padding: 6px 14px;
   font-size: 11px;
-  color: #8a8fa3;
-  background: #1a1d2e;
-  border-top: 1px solid #2a2e44;
+  color: var(--muted);
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Force-directed view ────────────────────────────────────── */
+
+.force-layer .nodes .node text {
+  user-select: none;
 }

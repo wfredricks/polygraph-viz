@@ -52,7 +52,7 @@
     "dev:demo": "npx tsx src/cli.ts --demo",
     "build": "npm run build:server && npm run build:client",
     "build:server": "tsup src/cli.ts src/index.ts src/middleware.ts src/server.ts --format esm --dts",
-    "build:client": "tsup src/client/main.ts --format esm --out-dir public --minify --target=es2022 --platform=browser",
+    "build:client": "tsup --config tsup.client.config.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -71,11 +71,11 @@
     "d3-zoom": "^3.0.0"
   },
   "devDependencies": {
-    "@types/d3-array": "^3.2.1",
-    "@types/d3-chord": "^6.0.3",
+    "@types/d3-array": "^3.2.2",
+    "@types/d3-chord": "^3.0.6",
     "@types/d3-drag": "^3.0.7",
     "@types/d3-force": "^3.0.10",
-    "@types/d3-sankey": "^0.12.4",
+    "@types/d3-sankey": "^0.12.5",
     "@types/d3-scale": "^4.0.8",
     "@types/d3-selection": "^3.0.10",
     "@types/d3-shape": "^3.1.6",
