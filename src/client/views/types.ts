@@ -15,17 +15,23 @@ export interface ViewHandle {
   /** Tear down DOM + simulations + listeners. */
   destroy(): void;
   /**
-   * Focus on a node's connection constellation.
+   * Focus on a node's connection constellation, or on a set of nodes.
    *
    *   focus(null)              — clear focus (restore default rendering)
    *   focus(id)                — highlight 1-hop neighborhood of `id`
    *   focus(id, { transitive: true }) — highlight the full reachable
    *                              subgraph in both directions (BFS)
+   *   focus([id1, id2, ...])   — highlight the union of all 1-hop
+   *                              neighborhoods. Used by chat 'Focus in
+   *                              Graph' button + segment chips.
    *
    * Views without a meaningful constellation (e.g. Sankey before nodes
    * are clickable) may no-op.
    */
-  focus(nodeId: string | null, opts?: { transitive?: boolean }): void;
+  focus(
+    nodeId: string | string[] | null,
+    opts?: { transitive?: boolean },
+  ): void;
 }
 
 /**

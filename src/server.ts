@@ -486,6 +486,84 @@ data: ${JSON.stringify(data)}
     return c.json({ ok: true, entry });
   });
 
+  /**
+   * Subgraph extraction. Returns a filtered GraphExport containing
+   * only the requested nodeIds and the edges between them. Optional
+   * `hops` parameter expands by N levels of adjacency.
+   *
+   * Body:
+   *   {
+   *     nodeIds: string[],    // required, non-empty
+   *     hops?: number,        // default 0 = just the requested nodes
+   *     includeIncoming?: boolean,
+   *     includeOutgoing?: boolean,
+   *   }
+   *
+   * Response: a GraphExport with the same shape /api/graph returns.
+   * Why this is a server endpoint (not client-side filtering): the
+   * client could compute it from /api/graph, but a server endpoint
+   * lets us audit subgraph extractions (future) and keeps the client
+   * simple — it just receives a GraphExport and mounts a renderer.
+   */
+  app.post('/api/subgraph', async (c) => {
+    const body = (await c.req.json()) as {
+      nodeIds?: string[];
+      hops?: number;
+      includeIncoming?: boolean;
+      includeOutgoing?: boolean;
+    };
+    const requested = (body.nodeIds ?? []).filter(
+      (x) => typeof x === 'string' && x.length > 0,
+    );
+    if (requested.length === 0) {
+      return c.json({ error: 'nodeIds is required and non-empty' }, 400);
+    }
+    const hops = Math.max(0, Math.min(body.hops ?? 0, 3));
+    const includeIncoming = body.includeIncoming ?? true;
+    const includeOutgoing = body.includeOutgoing ?? true;
+
+    const nodeIndex = new Map(graphData.nodes.map((n) => [n.id, n]));
+    const present = new Set<string>(requested.filter((id) => nodeIndex.has(id)));
+
+    // BFS expand by `hops` adjacency levels.
+    if (hops > 0) {
+      let frontier = new Set<string>(present);
+      for (let h = 0; h < hops; h++) {
+        const next = new Set<string>();
+        for (const e of graphData.edges) {
+          if (includeOutgoing && frontier.has(e.fromId) && !present.has(e.toId)) {
+            next.add(e.toId);
+          }
+          if (includeIncoming && frontier.has(e.toId) && !present.has(e.fromId)) {
+            next.add(e.fromId);
+          }
+        }
+        if (next.size === 0) break;
+        for (const id of next) present.add(id);
+        frontier = next;
+      }
+    }
+
+    // Filter graph to the present set + edges between present nodes.
+    const nodes = [...present]
+      .map((id) => nodeIndex.get(id))
+      .filter((n): n is NonNullable<typeof n> => n !== undefined);
+    const edges = graphData.edges.filter(
+      (e) => present.has(e.fromId) && present.has(e.toId),
+    );
+
+    return c.json({
+      nodes,
+      edges,
+      metadata: {
+        source: 'subgraph',
+        nodeCount: nodes.length,
+        edgeCount: edges.length,
+        exportedAt: new Date().toISOString(),
+      },
+    });
+  });
+
   app.get('/api/kb', (c) => {
     if (!kb) {
       return c.json({ error: 'NL features not enabled on this server' }, 503);

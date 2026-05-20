@@ -251,11 +251,12 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
   // Click a node → dim everything except the connected constellation
   // (direct neighbors by default; transitive subgraph with Shift-click).
   // Click the same node again → clear. Click empty space → clear. ESC → clear.
-  // focused.id  : single-node focus (constellation around that node)
+  // focused.id      : single-node focus (constellation around that node)
   // focused.byLabel : label-class focus (highlight every node of that label)
-  // The two are mutually exclusive at click time but share the same applyFocus.
+  // focused.byIds   : multi-id focus (union of 1-hop neighborhoods)
+  // The three modes are mutually exclusive at click time but share applyFocus.
   let focused:
-    | { id: string; transitive: boolean; byLabel?: string }
+    | { id: string; transitive: boolean; byLabel?: string; byIds?: string[] }
     | null = null;
 
   function computeFocusSet(nodeId: string, transitive: boolean): Set<string> {
@@ -299,7 +300,15 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
       return;
     }
     let focusSet: Set<string>;
-    if (focused.byLabel) {
+    if (focused.byIds && focused.byIds.length > 0) {
+      // Multi-id focus: union of 1-hop neighborhoods for each id.
+      focusSet = new Set<string>();
+      for (const id of focused.byIds) {
+        focusSet.add(id);
+        outgoing.get(id)?.forEach((n) => focusSet.add(n));
+        incoming.get(id)?.forEach((n) => focusSet.add(n));
+      }
+    } else if (focused.byLabel) {
       // Label-class focus: highlight every node whose primary label matches.
       focusSet = new Set<string>();
       for (const n of nodes) {
@@ -467,9 +476,22 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
           return matchedIds.has(s) && matchedIds.has(t) ? 'auto' : 'none';
         });
     },
-    focus(nodeId: string | null, opts?: { transitive?: boolean }): void {
+    focus(
+      nodeId: string | string[] | null,
+      opts?: { transitive?: boolean },
+    ): void {
       if (!nodeId) {
         focused = null;
+      } else if (Array.isArray(nodeId)) {
+        if (nodeId.length === 0) {
+          focused = null;
+        } else if (nodeId.length === 1) {
+          // Why: a one-element array reduces to single-id constellation
+          // focus for the cleanest UX (anchor halo on the one node).
+          focused = { id: nodeId[0]!, transitive: !!opts?.transitive };
+        } else {
+          focused = { id: '', transitive: false, byIds: [...nodeId] };
+        }
       } else {
         focused = { id: nodeId, transitive: !!opts?.transitive };
       }

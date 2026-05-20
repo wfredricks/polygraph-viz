@@ -7,6 +7,10 @@
  *   2. Wires the toolbar (view tabs, search, theme toggle).
  *   3. Hands the data to the active renderer (Force / Chord / Sankey).
  *   4. Forwards search input to the active view's ViewHandle.
+ *   5. Installs the chat drawer when /api/config reports nlEnabled.
+ *   6. Owns the "Render Subgraph" flow: swap the renderer's input to a
+ *      subgraph extraction from /api/subgraph, show a "← Back to full
+ *      graph" pill, and restore on click.
  *
  * Why a real client bundle (instead of inline <script>): the v0.1 viewer
  * shipped one giant <script> string inside cli.ts and hand-rolled SVG
@@ -27,7 +31,14 @@ import { NULL_HANDLE } from './views/types.js';
 import { installChat } from './ui/chat.js';
 
 interface AppState {
+  /** The graph currently being rendered. May be the full /api/graph snapshot or a subgraph. */
   graph: GraphExport | null;
+  /** The full graph snapshot, cached so "Back to full graph" can restore instantly. */
+  fullGraph: GraphExport | null;
+  /** Whether we are currently rendering a subgraph (vs the full graph). */
+  inSubgraph: boolean;
+  /** Free-text label shown in the back-pill when in subgraph mode. */
+  subgraphTitle: string;
   currentView: ViewKey;
   currentHandle: ViewHandle;
   currentSearch: string;
@@ -35,6 +46,9 @@ interface AppState {
 
 const state: AppState = {
   graph: null,
+  fullGraph: null,
+  inSubgraph: false,
+  subgraphTitle: '',
   currentView: 'force',
   currentHandle: NULL_HANDLE,
   currentSearch: '',
@@ -44,6 +58,25 @@ async function fetchGraph(): Promise<GraphExport> {
   const r = await fetch('/api/graph');
   if (!r.ok) {
     throw new Error(`/api/graph returned ${r.status}`);
+  }
+  return (await r.json()) as GraphExport;
+}
+
+async function fetchSubgraph(nodeIds: string[]): Promise<GraphExport> {
+  const r = await fetch('/api/subgraph', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      nodeIds,
+      // One hop of neighbors gives enough context to read the subgraph
+      // without overwhelming it. The user can shrink later if needed.
+      hops: 1,
+      includeIncoming: true,
+      includeOutgoing: true,
+    }),
+  });
+  if (!r.ok) {
+    throw new Error(`/api/subgraph returned ${r.status}`);
   }
   return (await r.json()) as GraphExport;
 }
@@ -81,6 +114,66 @@ function switchView(view: ViewKey): void {
   }
 }
 
+/** Stats line and the optional "Back to full graph" pill. */
+function refreshStatusLine(): void {
+  if (state.graph) {
+    void renderStats(state.graph);
+  }
+  ensureSubgraphPill();
+}
+
+/**
+ * Show / hide the "← Back to full graph" pill in the stats footer based
+ * on whether we are currently in subgraph mode.
+ */
+function ensureSubgraphPill(): void {
+  const stats = document.getElementById('stats');
+  if (!stats) return;
+  let pill = document.getElementById('subgraph-pill');
+  if (state.inSubgraph) {
+    if (!pill) {
+      pill = document.createElement('button');
+      pill.id = 'subgraph-pill';
+      pill.setAttribute('type', 'button');
+      pill.addEventListener('click', () => {
+        // Restore the full graph and remount whatever view was active.
+        if (!state.fullGraph) return;
+        state.graph = state.fullGraph;
+        state.inSubgraph = false;
+        state.subgraphTitle = '';
+        switchView(state.currentView);
+        refreshStatusLine();
+      });
+      stats.appendChild(pill);
+    }
+    const titleSuffix = state.subgraphTitle ? `: ${state.subgraphTitle}` : '';
+    pill.textContent = `← Back to full graph (subgraph${titleSuffix})`;
+  } else if (pill) {
+    pill.remove();
+  }
+}
+
+async function showSubgraph(citedNodes: string[], title: string): Promise<void> {
+  if (citedNodes.length === 0) return;
+  try {
+    const sub = await fetchSubgraph(citedNodes);
+    state.graph = sub;
+    state.inSubgraph = true;
+    state.subgraphTitle = title;
+    switchView(state.currentView);
+    refreshStatusLine();
+  } catch (err) {
+    console.error('subgraph fetch failed:', err);
+    const viz = document.getElementById('viz');
+    if (viz) {
+      const p = document.createElement('p');
+      p.className = 'placeholder error';
+      p.textContent = `Failed to render subgraph: ${String(err)}`;
+      viz.appendChild(p);
+    }
+  }
+}
+
 async function boot(): Promise<void> {
   installTheme();
   installToolbar({
@@ -92,8 +185,9 @@ async function boot(): Promise<void> {
   });
 
   try {
-    state.graph = await fetchGraph();
-    void renderStats(state.graph);
+    state.fullGraph = await fetchGraph();
+    state.graph = state.fullGraph;
+    refreshStatusLine();
     switchView(state.currentView);
 
     // Install the chat drawer if the server enabled NL. Off-by-default
@@ -108,6 +202,9 @@ async function boot(): Promise<void> {
           nlEnabled: true,
           snapshotHash: cfg.embedCache?.snapshotHash ?? 'default',
           getCurrentViewHandle: () => state.currentHandle,
+          onSubgraphRequested: (citedNodes, title) => {
+            void showSubgraph(citedNodes, title);
+          },
         });
       }
     } catch (err) {

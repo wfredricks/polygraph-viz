@@ -45,6 +45,12 @@ interface ChatBootOptions {
   nlEnabled: boolean;
   snapshotHash: string;
   getCurrentViewHandle: () => ViewHandle;
+  /**
+   * Callback for 'Render Subgraph' button. The host wires this to its
+   * subgraph-view mounting machinery. The chat module doesn't own the
+   * graph viewer, so it just reports the user's intent.
+   */
+  onSubgraphRequested?: (citedNodes: string[], title: string) => void;
 }
 
 const STORAGE_PREFIX = 'polygraph-viz:chat:';
@@ -282,6 +288,42 @@ export function installChat(opts: ChatBootOptions): void {
           }
         });
 
+        // 'Focus in Graph' — light up all cited nodes in the current view.
+        // Uses the v0.3.1 multi-id focus mode (union of 1-hop
+        // neighborhoods). Click again to clear.
+        const focusBtn = document.createElement('button');
+        focusBtn.type = 'button';
+        focusBtn.className = 'chat-tool';
+        focusBtn.textContent = 'Focus in Graph';
+        focusBtn.title = `Highlight ${msg.citedNodes.length} cited node${msg.citedNodes.length === 1 ? '' : 's'} (and their direct neighbors) in the current view`;
+        let focusActive = false;
+        focusBtn.addEventListener('click', () => {
+          const handle = opts.getCurrentViewHandle();
+          if (focusActive) {
+            handle.focus(null);
+            focusActive = false;
+            focusBtn.textContent = 'Focus in Graph';
+          } else {
+            handle.focus(msg.citedNodes ?? []);
+            focusActive = true;
+            focusBtn.textContent = 'Clear focus';
+          }
+        });
+
+        // 'Render Subgraph' — opens a fresh subgraph view with just the
+        // cited nodes + their interconnecting edges. Implemented via the
+        // /api/subgraph endpoint and a subgraph-mode renderer overlay.
+        const subgraphBtn = document.createElement('button');
+        subgraphBtn.type = 'button';
+        subgraphBtn.className = 'chat-tool';
+        subgraphBtn.textContent = 'Render Subgraph';
+        subgraphBtn.title = 'Open a fresh view with just the cited nodes';
+        subgraphBtn.addEventListener('click', () => {
+          opts.onSubgraphRequested?.(msg.citedNodes ?? [], msg.content.slice(0, 80));
+        });
+
+        tools.appendChild(focusBtn);
+        tools.appendChild(subgraphBtn);
         tools.appendChild(evidenceBtn);
         tools.appendChild(saveBtn);
         el.appendChild(tools);

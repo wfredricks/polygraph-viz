@@ -226,7 +226,7 @@ export function renderChord(container: HTMLElement, graph: GraphExport): ViewHan
         return matchedGroups.has(a) && matchedGroups.has(b) ? 0.55 : 0.05;
       });
     },
-    focus(_nodeId: string | null, _opts?: { transitive?: boolean }): void {
+    focus(_nodeId: string | string[] | null, _opts?: { transitive?: boolean }): void {
       // Why: focus / constellation highlighting is not yet implemented
       // for this view. Force is the canonical surface for it; extending
       // to Sankey + Chord is tracked as a future v0.3 candidate. The
