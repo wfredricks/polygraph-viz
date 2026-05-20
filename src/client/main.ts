@@ -5,8 +5,8 @@
  *   1. Fetches /api/graph once (the same snapshot the server holds in
  *      memory) and caches it on the page.
  *   2. Wires the toolbar (view tabs, search, theme toggle).
- *   3. Hands the data to the active renderer (Force by default; Chord
- *      and Sankey are stubbed pending steps G and H).
+ *   3. Hands the data to the active renderer (Force / Chord / Sankey).
+ *   4. Forwards search input to the active view's ViewHandle.
  *
  * Why a real client bundle (instead of inline <script>): the v0.1 viewer
  * shipped one giant <script> string inside cli.ts and hand-rolled SVG
@@ -22,15 +22,21 @@ import { renderStats } from './ui/stats.js';
 import { renderForce } from './views/force.js';
 import { renderChord } from './views/chord.js';
 import { renderSankey } from './views/sankey.js';
+import type { ViewHandle } from './views/types.js';
+import { NULL_HANDLE } from './views/types.js';
 
 interface AppState {
   graph: GraphExport | null;
   currentView: ViewKey;
+  currentHandle: ViewHandle;
+  currentSearch: string;
 }
 
 const state: AppState = {
   graph: null,
   currentView: 'force',
+  currentHandle: NULL_HANDLE,
+  currentSearch: '',
 };
 
 async function fetchGraph(): Promise<GraphExport> {
@@ -42,27 +48,35 @@ async function fetchGraph(): Promise<GraphExport> {
 }
 
 /**
- * Switch the active view. Renderers are responsible for cleaning up
- * their own DOM in the #viz container before the next renderer mounts.
+ * Switch the active view. Previous handle is destroyed first; the new
+ * renderer takes responsibility for what lives inside #viz.
  */
 function switchView(view: ViewKey): void {
-  state.currentView = view;
   const viz = document.getElementById('viz');
   if (!viz || !state.graph) return;
 
-  // Clear previous renderer output.
+  // Tear down whatever was there.
+  state.currentHandle.destroy();
   viz.innerHTML = '';
+
+  state.currentView = view;
 
   switch (view) {
     case 'force':
-      renderForce(viz, state.graph);
+      state.currentHandle = renderForce(viz, state.graph);
       break;
     case 'chord':
-      renderChord(viz, state.graph);
+      state.currentHandle = renderChord(viz, state.graph);
       break;
     case 'sankey':
-      renderSankey(viz, state.graph);
+      state.currentHandle = renderSankey(viz, state.graph);
       break;
+  }
+
+  // Re-apply current search to the new view so the user's filter is
+  // preserved across view switches.
+  if (state.currentSearch) {
+    state.currentHandle.setSearch(state.currentSearch);
   }
 }
 
@@ -71,10 +85,8 @@ async function boot(): Promise<void> {
   installToolbar({
     onViewChange: (view) => switchView(view),
     onSearch: (q) => {
-      // Why: search wiring expands in step I (inspector + filter-on-search).
-      // For now, log so the toolbar event is observably reaching the boot
-      // module.
-      console.debug('search query:', q);
+      state.currentSearch = q;
+      state.currentHandle.setSearch(q);
     },
   });
 

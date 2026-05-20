@@ -232,3 +232,30 @@ main {
 .force-layer .nodes .node text {
   user-select: none;
 }
+
+/* ── Inspector — group-members list ──────────────────────── */
+
+#inspector ul.group-members {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-size: 12px;
+}
+
+#inspector ul.group-members li {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+  word-break: break-word;
+}
+
+#inspector ul.group-members li code {
+  color: var(--muted);
+  font-size: 11px;
+  margin-right: 6px;
+}
+
+#inspector ul.group-members li.muted {
+  color: var(--muted);
+  font-style: italic;
+  text-align: center;
+}

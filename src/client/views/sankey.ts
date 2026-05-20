@@ -25,8 +25,11 @@ import {
   type SankeyNode,
   type SankeyLink,
 } from 'd3-sankey';
-import type { GraphExport } from '../../types.js';
+import type { GraphExport, VizNode } from '../../types.js';
 import { colorForLabel, primaryLabel } from '../ui/palette.js';
+import { showNode, clearInspector, nodeMatches } from '../ui/inspector.js';
+import type { ViewHandle } from './types.js';
+import { NULL_HANDLE } from './types.js';
 
 interface SNodeExtra {
   /** Sankey node id (synthetic: `${layerLabel}::${graphNodeId}`). */
@@ -133,7 +136,7 @@ function autoDetectChain(graph: GraphExport, primary: Map<string, string>): stri
   return chain;
 }
 
-export function renderSankey(container: HTMLElement, graph: GraphExport): void {
+export function renderSankey(container: HTMLElement, graph: GraphExport): ViewHandle {
   const width = container.clientWidth || 1000;
   const height = container.clientHeight || 600;
 
@@ -151,7 +154,7 @@ export function renderSankey(container: HTMLElement, graph: GraphExport): void {
         Sankey needs a chain of at least 2 label classes. Could not auto-detect one.
         Try a URL like <code>?sankey=Requirement,Feature,UseCase</code>.
       </p>`;
-    return;
+    return NULL_HANDLE;
   }
   const chainIndex = new Map(chain.map((l, i) => [l, i]));
 
@@ -206,8 +209,11 @@ export function renderSankey(container: HTMLElement, graph: GraphExport): void {
         Sankey chain <code>${chain.join(' → ')}</code> resolves to 0 cross-layer edges.
         Try a different chain via <code>?sankey=A,B,C</code>.
       </p>`;
-    return;
+    return NULL_HANDLE;
   }
+
+  // VizNode lookup for click-to-inspect.
+  const vizById = new Map<string, VizNode>(graph.nodes.map((n) => [n.id, n]));
 
   const sankeyGen = sankeyLayout<SNodeExtra, SLinkExtra>()
     .nodeId((d) => d.id)
@@ -247,11 +253,11 @@ export function renderSankey(container: HTMLElement, graph: GraphExport): void {
     .attr('preserveAspectRatio', 'xMidYMid meet');
 
   // Links.
-  svg
+  const linkSel = svg
     .append('g')
     .attr('class', 'sankey-links')
     .attr('fill', 'none')
-    .selectAll('path')
+    .selectAll<SVGPathElement, (typeof laidOut.links)[number]>('path')
     .data(laidOut.links)
     .enter()
     .append('path')
@@ -261,13 +267,12 @@ export function renderSankey(container: HTMLElement, graph: GraphExport): void {
       return colorForLabel(src.layer);
     })
     .attr('stroke-opacity', 0.35)
-    .attr('stroke-width', (d) => Math.max(1, d.width ?? 1))
-    .append('title')
-    .text((d) => {
-      const src = d.source as SNode;
-      const tgt = d.target as SNode;
-      return `${src.name} → ${tgt.name} (${(d as { edgeType?: string }).edgeType ?? 'edge'})`;
-    });
+    .attr('stroke-width', (d) => Math.max(1, d.width ?? 1));
+  linkSel.append('title').text((d) => {
+    const src = d.source as SNode;
+    const tgt = d.target as SNode;
+    return `${src.name} → ${tgt.name} (${(d as { edgeType?: string }).edgeType ?? 'edge'})`;
+  });
 
   // Nodes.
   const nodeGroup = svg
@@ -278,7 +283,7 @@ export function renderSankey(container: HTMLElement, graph: GraphExport): void {
     .enter()
     .append('g');
 
-  nodeGroup
+  const rectSel = nodeGroup
     .append('rect')
     .attr('x', (d) => d.x0 ?? 0)
     .attr('y', (d) => d.y0 ?? 0)
@@ -287,8 +292,12 @@ export function renderSankey(container: HTMLElement, graph: GraphExport): void {
     .attr('fill', (d) => colorForLabel(d.layer))
     .attr('stroke', 'var(--bg)')
     .attr('stroke-width', 0.5)
-    .append('title')
-    .text((d) => `${d.name}\n${d.layer}`);
+    .style('cursor', 'pointer')
+    .on('click', (_event, d) => {
+      const v = vizById.get(d.graphId);
+      if (v) showNode(v);
+    });
+  rectSel.append('title').text((d) => `${d.name}\n${d.layer}`);
 
   nodeGroup
     .append('text')
@@ -323,4 +332,33 @@ export function renderSankey(container: HTMLElement, graph: GraphExport): void {
     .attr('font-size', 11)
     .attr('font-weight', 600)
     .text((d) => d[0]);
+
+  // ── ViewHandle ──────────────────────────────────────────────
+  return {
+    setSearch(query: string): void {
+      if (!query) {
+        rectSel.style('opacity', 1);
+        nodeGroup.selectAll('text').style('opacity', 1);
+        linkSel.style('stroke-opacity', 0.35);
+        return;
+      }
+      const matched = new Set<string>();
+      for (const n of graph.nodes) {
+        if (nodeMatches(n, query)) matched.add(n.id);
+      }
+      rectSel.style('opacity', (d) => (matched.has(d.graphId) ? 1 : 0.2));
+      nodeGroup
+        .selectAll<SVGTextElement, SNode>('text')
+        .style('opacity', (d) => (matched.has(d.graphId) ? 1 : 0.2));
+      linkSel.style('stroke-opacity', (d) => {
+        const s = (d.source as SNode).graphId;
+        const t = (d.target as SNode).graphId;
+        return matched.has(s) && matched.has(t) ? 0.55 : 0.05;
+      });
+    },
+    destroy(): void {
+      select(container).select('svg').remove();
+      clearInspector();
+    },
+  };
 }

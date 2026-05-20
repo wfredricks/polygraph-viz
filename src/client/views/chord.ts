@@ -20,8 +20,11 @@ import { select } from 'd3-selection';
 import { arc } from 'd3-shape';
 import { chord, ribbon } from 'd3-chord';
 import { descending } from 'd3-array';
-import type { GraphExport } from '../../types.js';
+import type { GraphExport, VizNode } from '../../types.js';
 import { colorForLabel, primaryLabel } from '../ui/palette.js';
+import { showGroup, clearInspector, nodeMatches } from '../ui/inspector.js';
+import type { ViewHandle } from './types.js';
+import { NULL_HANDLE } from './types.js';
 
 /**
  * Build the group-by-group adjacency matrix used by d3.chord().
@@ -62,7 +65,7 @@ function buildMatrix(graph: GraphExport): {
   return { matrix, groups, groupCounts };
 }
 
-export function renderChord(container: HTMLElement, graph: GraphExport): void {
+export function renderChord(container: HTMLElement, graph: GraphExport): ViewHandle {
   const width = container.clientWidth || 800;
   const height = container.clientHeight || 600;
   const radius = Math.min(width, height) / 2;
@@ -74,11 +77,19 @@ export function renderChord(container: HTMLElement, graph: GraphExport): void {
   if (groups.length === 0) {
     container.innerHTML =
       '<p class="placeholder">Chord view needs at least one labeled node.</p>';
-    return;
+    return NULL_HANDLE;
   }
   if (groups.length === 1) {
     container.innerHTML = `<p class="placeholder">Chord view needs ≥2 distinct primary labels; this graph has one (${groups[0]}, ${groupCounts[groups[0]!]} nodes). Try Force view.</p>`;
-    return;
+    return NULL_HANDLE;
+  }
+
+  // Group -> member VizNodes (for click-to-inspect + search dimming).
+  const membersByGroup = new Map<string, VizNode[]>();
+  for (const n of graph.nodes) {
+    const g = primaryLabel(n.labels);
+    if (!membersByGroup.has(g)) membersByGroup.set(g, []);
+    membersByGroup.get(g)!.push(n);
   }
 
   const svg = select(container)
@@ -113,7 +124,7 @@ export function renderChord(container: HTMLElement, graph: GraphExport): void {
     .enter()
     .append('g');
 
-  groupSel
+  const arcSel = groupSel
     .append('path')
     .attr('d', (d) =>
       groupArc({ startAngle: d.startAngle, endAngle: d.endAngle }) ?? '',
@@ -121,11 +132,15 @@ export function renderChord(container: HTMLElement, graph: GraphExport): void {
     .attr('fill', (d) => colorForLabel(groups[d.index]!))
     .attr('stroke', 'var(--bg)')
     .attr('stroke-width', 1)
-    .append('title')
-    .text((d) => {
+    .style('cursor', 'pointer')
+    .on('click', (_event, d) => {
       const g = groups[d.index]!;
-      return `${g} — ${groupCounts[g]} nodes`;
+      showGroup(g, membersByGroup.get(g) ?? []);
     });
+  arcSel.append('title').text((d) => {
+    const g = groups[d.index]!;
+    return `${g} — ${groupCounts[g]} nodes`;
+  });
 
   const midAngle = (d: { startAngle: number; endAngle: number }): number =>
     (d.startAngle + d.endAngle) / 2;
@@ -146,22 +161,48 @@ export function renderChord(container: HTMLElement, graph: GraphExport): void {
     });
 
   // Ribbons (between-group traffic).
-  svg
+  const ribbonSel = svg
     .append('g')
     .attr('class', 'ribbons')
     .attr('fill-opacity', 0.55)
-    .selectAll('path')
+    .selectAll<SVGPathElement, (typeof chords)[number]>('path')
     .data(chords)
     .enter()
     .append('path')
     .attr('d', (d) => (ribbonGen as unknown as (x: unknown) => string | null)(d) ?? '')
     .attr('fill', (d) => colorForLabel(groups[d.source.index]!))
     .attr('stroke', 'var(--bg)')
-    .attr('stroke-width', 0.5)
-    .append('title')
-    .text((d) => {
-      const a = groups[d.source.index]!;
-      const b = groups[d.target.index]!;
-      return `${a} ↔ ${b}: ${d.source.value} edges`;
-    });
+    .attr('stroke-width', 0.5);
+  ribbonSel.append('title').text((d) => {
+    const a = groups[d.source.index]!;
+    const b = groups[d.target.index]!;
+    return `${a} ↔ ${b}: ${d.source.value} edges`;
+  });
+
+  return {
+    setSearch(query: string): void {
+      if (!query) {
+        arcSel.style('opacity', 1);
+        ribbonSel.style('opacity', 0.55);
+        return;
+      }
+      // A group is "matched" if any of its member nodes match.
+      const matchedGroups = new Set<string>();
+      for (const [g, members] of membersByGroup.entries()) {
+        if (members.some((n) => nodeMatches(n, query))) matchedGroups.add(g);
+      }
+      arcSel.style('opacity', (d) =>
+        matchedGroups.has(groups[d.index]!) ? 1 : 0.2,
+      );
+      ribbonSel.style('opacity', (d) => {
+        const a = groups[d.source.index]!;
+        const b = groups[d.target.index]!;
+        return matchedGroups.has(a) && matchedGroups.has(b) ? 0.55 : 0.05;
+      });
+    },
+    destroy(): void {
+      select(container).select('svg').remove();
+      clearInspector();
+    },
+  };
 }

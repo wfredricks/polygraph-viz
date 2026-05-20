@@ -15,7 +15,7 @@
  * build SIG (~2k nodes when fully loaded) both fit comfortably.
  */
 
-import { select, type Selection } from 'd3-selection';
+import { select } from 'd3-selection';
 import { drag, type D3DragEvent } from 'd3-drag';
 import { zoom, type D3ZoomEvent } from 'd3-zoom';
 import {
@@ -30,13 +30,13 @@ import {
 } from 'd3-force';
 import type { GraphExport, VizNode, VizEdge } from '../../types.js';
 import { colorForLabel, primaryLabel } from '../ui/palette.js';
+import { showNode, clearInspector, pickDisplayName, nodeMatches } from '../ui/inspector.js';
+import type { ViewHandle } from './types.js';
 
-/** d3-force mutates nodes with x/y/vx/vy; widen the type for the sim. */
 interface ForceNode extends SimulationNodeDatum {
   id: string;
   labels: string[];
   properties: Record<string, unknown>;
-  /** Cached primary label for coloring + tooltip. */
   primary: string;
 }
 
@@ -45,7 +45,7 @@ interface ForceLink extends SimulationLinkDatum<ForceNode> {
   type: string;
 }
 
-export function renderForce(container: HTMLElement, graph: GraphExport): void {
+export function renderForce(container: HTMLElement, graph: GraphExport): ViewHandle {
   const width = container.clientWidth || 800;
   const height = container.clientHeight || 600;
 
@@ -57,6 +57,9 @@ export function renderForce(container: HTMLElement, graph: GraphExport): void {
   }));
 
   const nodeById = new Map(nodes.map((n) => [n.id, n]));
+  // Why: keep the original VizNode handy so inspector + search can
+  // operate on the un-mutated properties object.
+  const vizById = new Map(graph.nodes.map((n) => [n.id, n]));
 
   const links: ForceLink[] = graph.edges
     .map((e: VizEdge): ForceLink | null => {
@@ -67,7 +70,6 @@ export function renderForce(container: HTMLElement, graph: GraphExport): void {
     })
     .filter((l): l is ForceLink => l !== null);
 
-  // Root SVG + a zoom-able layer.
   const svg = select(container)
     .append('svg')
     .attr('width', '100%')
@@ -77,7 +79,6 @@ export function renderForce(container: HTMLElement, graph: GraphExport): void {
 
   const layer = svg.append('g').attr('class', 'force-layer');
 
-  // Edges first so nodes draw on top.
   const linkSel = layer
     .append('g')
     .attr('class', 'links')
@@ -108,7 +109,10 @@ export function renderForce(container: HTMLElement, graph: GraphExport): void {
 
   nodeSel
     .append('text')
-    .text((d) => labelText(d))
+    .text((d) => {
+      const viz = vizById.get(d.id);
+      return viz ? pickDisplayName(viz) : d.id;
+    })
     .attr('x', 11)
     .attr('y', 4)
     .attr('fill', 'var(--ink)')
@@ -117,10 +121,7 @@ export function renderForce(container: HTMLElement, graph: GraphExport): void {
 
   nodeSel.append('title').text((d) => `${d.id}\n${d.labels.join(' · ')}`);
 
-  // Simulation.
-  const sim: Simulation<ForceNode, ForceLink> = forceSimulation<ForceNode>(
-    nodes,
-  )
+  const sim: Simulation<ForceNode, ForceLink> = forceSimulation<ForceNode>(nodes)
     .force(
       'link',
       forceLink<ForceNode, ForceLink>(links)
@@ -140,7 +141,6 @@ export function renderForce(container: HTMLElement, graph: GraphExport): void {
       nodeSel.attr('transform', (d) => `translate(${d.x ?? 0},${d.y ?? 0})`);
     });
 
-  // Drag.
   nodeSel.call(
     drag<SVGGElement, ForceNode>()
       .on('start', (event: D3DragEvent<SVGGElement, ForceNode, ForceNode>, d) => {
@@ -159,7 +159,6 @@ export function renderForce(container: HTMLElement, graph: GraphExport): void {
       }),
   );
 
-  // Pan + zoom.
   svg.call(
     zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.1, 4])
@@ -168,62 +167,40 @@ export function renderForce(container: HTMLElement, graph: GraphExport): void {
       }),
   );
 
-  // Click to inspect.
   nodeSel.on('click', (_event, d) => {
-    showInspector(d);
+    const viz = vizById.get(d.id);
+    if (viz) showNode(viz);
   });
-}
 
-function labelText(n: ForceNode): string {
-  // Why: prefer a human-readable property over the id when one is
-  // available. SI nodes use `name`; PolyGraph demos use `label`.
-  const props = n.properties as Record<string, unknown>;
-  const candidate = props['name'] ?? props['label'] ?? props['summary'];
-  if (typeof candidate === 'string' && candidate.length > 0) {
-    return candidate.length > 40 ? candidate.slice(0, 37) + '…' : candidate;
-  }
-  return n.id;
-}
-
-function showInspector(n: ForceNode): void {
-  const aside = document.getElementById('inspector') as HTMLElement | null;
-  if (!aside) return;
-  aside.hidden = false;
-
-  const props = Object.entries(n.properties)
-    .map(
-      ([k, v]) =>
-        `<tr><td>${escapeHtml(k)}</td><td>${escapeHtml(String(v))}</td></tr>`,
-    )
-    .join('');
-
-  aside.innerHTML = `
-    <header>
-      <h2>${escapeHtml(labelText(n))}</h2>
-      <p class="labels">${n.labels.map(escapeHtml).join(' · ')}</p>
-    </header>
-    <table class="props">
-      <thead><tr><th>key</th><th>value</th></tr></thead>
-      <tbody>${props}</tbody>
-    </table>
-  `;
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-declare module 'd3-selection' {
-  // Why: silences the "may be implicitly any" on .selectAll downstream
-  // when Selection is used through call().
-  interface Selection<
-    GElement extends Element | EnterElement | Document | Window | null,
-    Datum,
-    PElement extends Element | EnterElement | Document | Window | null,
-    PDatum,
-  > {}
+  // ── ViewHandle ──────────────────────────────────────────────
+  const handle: ViewHandle = {
+    setSearch(query: string): void {
+      // Greyout non-matches. Empty query restores everything.
+      if (!query) {
+        nodeSel.style('opacity', 1).select('circle').attr('stroke-width', 0.8);
+        linkSel.style('opacity', 0.7);
+        return;
+      }
+      const matchedIds = new Set<string>();
+      for (const n of graph.nodes) {
+        if (nodeMatches(n, query)) matchedIds.add(n.id);
+      }
+      nodeSel
+        .style('opacity', (d) => (matchedIds.has(d.id) ? 1 : 0.15))
+        .select('circle')
+        .attr('stroke-width', (d) => (matchedIds.has(d.id) ? 2.2 : 0.8))
+        .attr('stroke', (d) => (matchedIds.has(d.id) ? 'var(--accent)' : 'var(--ink)'));
+      linkSel.style('opacity', (d) => {
+        const s = (d.source as ForceNode).id;
+        const t = (d.target as ForceNode).id;
+        return matchedIds.has(s) && matchedIds.has(t) ? 0.7 : 0.05;
+      });
+    },
+    destroy(): void {
+      sim.stop();
+      svg.remove();
+      clearInspector();
+    },
+  };
+  return handle;
 }
