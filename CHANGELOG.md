@@ -4,7 +4,7 @@ All notable changes to polygraph-viz follow [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
-## [0.2.0-pre] — 2026-05-20
+## [0.2.0] — 2026-05-20
 
 ### Added
 
@@ -30,6 +30,12 @@ All notable changes to polygraph-viz follow [Keep a Changelog](https://keepachan
 ### Fixed
 
 - **`@types/d3-chord` and `@types/d3-array`** versions corrected to actual published versions (3.0.6 and 3.2.2). The proposal had stale numbers.
+
+### Fixed (post-tag, rolled into 0.2.0)
+
+- **Force-directed graph was left-justified on first paint.** The renderer measured the container before the page's grid layout had settled, so `forceCenter()` anchored at the wrong point and the simulation collapsed top-left. Now uses a `ResizeObserver` on the `#viz` container and re-anchors the center force whenever the container's real size changes.
+- **Dark-mode edges were invisible.** SVG presentation attributes set via `.attr('stroke', 'var(--edge)')` do not reliably resolve CSS variables across browsers. Moved every `var(--*)` presentation token to CSS class selectors (`.edge`, `.node-circle`, `.chord-arc`, `.chord-ribbon`, `.chord-label`, `.sankey-link`, `.sankey-node`, `.sankey-node-label`, `.sankey-header`) so the cascade resolves correctly and theme toggles propagate atomically.
+- **Edge contrast was too low to read.** Old `--edge` was `#3a3f55` (2.7:1 effective against `--bg` after 0.7 alpha). Raised to `#7e88a8` for dark (~5.9:1 effective at 0.9 alpha) and `#9aa1b4` for light (~2.5:1 effective at 0.9 alpha). Force-view `.edge` stroke-opacity raised 0.7 -> 0.9.
 
 ## [0.1.1] — 2026-05-20
 
