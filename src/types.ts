@@ -51,6 +51,12 @@ export interface VizConfig {
   write?: boolean;
   /** Auto-open browser */
   open?: boolean;
+  /**
+   * Custom title shown in the browser tab and in the viewer toolbar.
+   * Defaults to "PolyGraph Viz". Useful when embedding the viewer in
+   * a downstream product (e.g. `--title "Solution Intel"`).
+   */
+  title?: string;
   /** Theme configuration */
   theme?: ThemeConfig;
   /** Default layout mode */

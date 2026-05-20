@@ -92,8 +92,15 @@ export async function loadGraph(config: VizConfig): Promise<GraphExport> {
  * so existing consumers do not break. Static assets are read once at
  * startup and served from memory.
  */
-export function buildApp(graphData: GraphExport): Hono {
+export function buildApp(
+  graphData: GraphExport,
+  options: { title?: string } = {},
+): Hono {
   const app = new Hono();
+  // Why: a default title so the viewer brands as itself when no
+  // downstream product overrides; downstream products (e.g. SI's
+  // si-sig-viz container) pass --title to rebrand.
+  const title = (options.title ?? 'PolyGraph Viz').replace(/[<>"']/g, '');
 
   // Why: the viewer page may be served from a different origin during
   // development (a proposal-time static page, an iframe in a wiki, etc.),
@@ -131,7 +138,11 @@ export function buildApp(graphData: GraphExport): Hono {
         500,
       );
     }
-    return c.body(readFileSync(filePath, 'utf-8'), 200, {
+    // Why: substitute the {{TITLE}} placeholder so the same shipped
+    // index.html file serves both the default-branded viewer and any
+    // downstream-branded variant.
+    const html = readFileSync(filePath, 'utf-8').replace(/\{\{TITLE\}\}/g, title);
+    return c.body(html, 200, {
       'Content-Type': 'text/html; charset=utf-8',
     });
   });

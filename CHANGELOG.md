@@ -4,6 +4,14 @@ All notable changes to polygraph-viz follow [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.2.7] — 2026-05-20
+
+### Added
+
+- **`--title <string>` CLI flag** to override the viewer's browser-tab title and toolbar header. Defaults to `"PolyGraph Viz"`. Lets downstream products embed the viewer with their own branding without forking the viewer source. Example: `npx polygraph-viz --path ./data --title "Solution Intel"` renders with `<title>Solution Intel</title>` and `<h1>Solution Intel</h1>`. Solution Intelligence's `si-sig-viz` container now uses this.
+- `buildApp(graphData, { title })` accepts the same option programmatically.
+- `index.html` ships with a `{{TITLE}}` placeholder; the server substitutes at request time so a single shipped HTML serves both default and custom-branded variants. Any `<`, `>`, `"`, `'` in the supplied title are stripped to prevent injection.
+
 ## [0.2.6] — 2026-05-20
 
 ### Fixed

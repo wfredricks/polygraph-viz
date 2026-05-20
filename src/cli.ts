@@ -52,6 +52,12 @@ function parseArgs(argv: string[]): VizConfig {
       case '--open':
         config.open = true;
         break;
+      case '--title':
+        // Why: optional override of the viewer's tab + toolbar title so
+        // downstream products (e.g. SI's si-sig-viz container) can
+        // brand the embed without forking the viewer source.
+        config.title = args[++i];
+        break;
       default:
         // Why: forward-compat — silently ignore unknown flags so an older
         // CLI keeps working when a newer wrapper adds options.
@@ -78,7 +84,7 @@ async function main(): Promise<void> {
   }
 
   const graphData = await loadGraph(config);
-  const app = buildApp(graphData);
+  const app = buildApp(graphData, { title: config.title });
 
   const port = config.port ?? 4444;
   serve({ fetch: app.fetch, port }, () => {
