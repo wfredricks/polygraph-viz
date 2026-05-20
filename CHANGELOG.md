@@ -4,6 +4,36 @@ All notable changes to polygraph-viz follow [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-05-20
+
+### Added
+
+- **Edge inspection** across all three views. PolyGraph supports edge
+  properties, but v0.2.0 had no way to surface them; they're now
+  reachable end-to-end.
+  - **Force**: edges are clickable via a transparent 10px-wide hit-area
+    halo behind the thin visible line (1-2px lines were impossible to
+    click reliably). Click an edge → right-side inspector shows edge
+    type, endpoint ids, friendly endpoint names, and the full property
+    table.
+  - **Sankey**: links are clickable. Each link corresponds to exactly
+    one edge in the source graph; click → same inspector.
+  - **Chord**: ribbons are clickable. Because a ribbon aggregates many
+    cross-group edges, the inspector shows a `showAggregate` view: a
+    count of edges by type plus a sample of up to 30 constituent edges.
+- **Hit-area dimming respects search filter**: when the search filter
+  hides an edge (both endpoints not matching), the edge's hit area is
+  disabled too so users don't accidentally click invisible targets.
+- **Force edge stroke-opacity raised** 0.7 → 0.9 to match the higher
+  visible-edge contrast introduced in v0.2.0's final fix.
+
+### Changed
+
+- `inspector.ts` grew two new exports (`showEdge`, `showAggregate`) and
+  one new helper (the edge view formats type as a code-styled accent
+  badge so the inspector visually distinguishes edge-mode from
+  node-mode).
+
 ## [0.2.0] — 2026-05-20
 
 ### Added

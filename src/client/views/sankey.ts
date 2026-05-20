@@ -27,7 +27,7 @@ import {
 } from 'd3-sankey';
 import type { GraphExport, VizNode } from '../../types.js';
 import { colorForLabel, primaryLabel } from '../ui/palette.js';
-import { showNode, clearInspector, nodeMatches } from '../ui/inspector.js';
+import { showNode, showEdge, clearInspector, nodeMatches } from '../ui/inspector.js';
 import type { ViewHandle } from './types.js';
 import { NULL_HANDLE } from './types.js';
 
@@ -269,7 +269,19 @@ export function renderSankey(container: HTMLElement, graph: GraphExport): ViewHa
       return colorForLabel(src.layer);
     })
     .attr('stroke-opacity', 0.35)
-    .attr('stroke-width', (d) => Math.max(1, d.width ?? 1));
+    .attr('stroke-width', (d) => Math.max(1, d.width ?? 1))
+    .style('cursor', 'pointer')
+    .on('click', (_event, d) => {
+      // The Sankey link carries the original graph edge id; re-derive
+      // the VizEdge for the inspector.
+      const edgeId = (d as { edgeId?: string }).edgeId;
+      if (!edgeId) return;
+      const original = graph.edges.find((e) => e.id === edgeId);
+      if (!original) return;
+      const src = vizById.get(original.fromId);
+      const tgt = vizById.get(original.toId);
+      showEdge(original, src, tgt);
+    });
   linkSel.append('title').text((d) => {
     const src = d.source as SNode;
     const tgt = d.target as SNode;

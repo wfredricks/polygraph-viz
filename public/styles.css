@@ -316,3 +316,48 @@ main {
 .sankey-svg .sankey-header {
   fill: var(--muted);
 }
+
+/* ── Inspector — edge view + aggregate ───────────────────── */
+
+#inspector header h2.edge-title {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  color: var(--accent);
+}
+
+#inspector .edge-endpoints {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 2px;
+}
+
+#inspector .edge-endpoints code {
+  background: var(--panel-2);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+#inspector .edge-endpoints .arrow {
+  color: var(--ink);
+}
+
+#inspector .edge-endpoints-friendly {
+  font-size: 12px;
+  color: var(--ink);
+  margin-bottom: 12px;
+}
+
+#inspector h3.sample-header {
+  margin-top: 14px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}

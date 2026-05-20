@@ -20,20 +20,25 @@ import { select } from 'd3-selection';
 import { arc } from 'd3-shape';
 import { chord, ribbon } from 'd3-chord';
 import { descending } from 'd3-array';
-import type { GraphExport, VizNode } from '../../types.js';
+import type { GraphExport, VizNode, VizEdge } from '../../types.js';
 import { colorForLabel, primaryLabel } from '../ui/palette.js';
-import { showGroup, clearInspector, nodeMatches } from '../ui/inspector.js';
+import { showGroup, showAggregate, clearInspector, nodeMatches } from '../ui/inspector.js';
 import type { ViewHandle } from './types.js';
 import { NULL_HANDLE } from './types.js';
 
 /**
  * Build the group-by-group adjacency matrix used by d3.chord().
- * Returns the matrix plus the group order (so we can attach labels).
+ * Returns the matrix, group order, group counts, AND a map of
+ * group-pair -> underlying VizEdges (so ribbon clicks can surface
+ * the constituent edges).
  */
 function buildMatrix(graph: GraphExport): {
   matrix: number[][];
   groups: string[];
   groupCounts: Record<string, number>;
+  /** Map from `"groupA||groupB"` (canonical order) to the edges
+   *  whose endpoints fall into those two groups. */
+  edgesByPair: Map<string, VizEdge[]>;
 } {
   // Group every node by its primary label.
   const nodeGroup = new Map<string, string>();
@@ -49,6 +54,9 @@ function buildMatrix(graph: GraphExport): {
   const matrix: number[][] = Array.from({ length: n }, () =>
     Array.from({ length: n }, () => 0),
   );
+  const edgesByPair = new Map<string, VizEdge[]>();
+  const pairKey = (a: string, b: string): string =>
+    a <= b ? `${a}||${b}` : `${b}||${a}`;
   for (const e of graph.edges) {
     const a = nodeGroup.get(e.fromId);
     const b = nodeGroup.get(e.toId);
@@ -61,8 +69,11 @@ function buildMatrix(graph: GraphExport): {
     // traffic between the two groups regardless of direction.
     matrix[i]![j]! += 1;
     if (i !== j) matrix[j]![i]! += 1;
+    const key = pairKey(a, b);
+    if (!edgesByPair.has(key)) edgesByPair.set(key, []);
+    edgesByPair.get(key)!.push(e);
   }
-  return { matrix, groups, groupCounts };
+  return { matrix, groups, groupCounts, edgesByPair };
 }
 
 export function renderChord(container: HTMLElement, graph: GraphExport): ViewHandle {
@@ -72,7 +83,10 @@ export function renderChord(container: HTMLElement, graph: GraphExport): ViewHan
   const innerRadius = Math.max(radius - 80, 40);
   const outerRadius = innerRadius + 14;
 
-  const { matrix, groups, groupCounts } = buildMatrix(graph);
+  const { matrix, groups, groupCounts, edgesByPair } = buildMatrix(graph);
+  const vizById = new Map<string, VizNode>(graph.nodes.map((n) => [n.id, n]));
+  const pairKey = (a: string, b: string): string =>
+    a <= b ? `${a}||${b}` : `${b}||${a}`;
 
   if (groups.length === 0) {
     container.innerHTML =
@@ -161,7 +175,7 @@ export function renderChord(container: HTMLElement, graph: GraphExport): ViewHan
       return `${g} (${groupCounts[g]})`;
     });
 
-  // Ribbons (between-group traffic).
+  // Ribbons (between-group traffic). Clickable -> showAggregate.
   const ribbonSel = svg
     .append('g')
     .attr('class', 'ribbons')
@@ -173,7 +187,15 @@ export function renderChord(container: HTMLElement, graph: GraphExport): ViewHan
     .attr('class', 'chord-ribbon')
     .attr('d', (d) => (ribbonGen as unknown as (x: unknown) => string | null)(d) ?? '')
     .attr('fill', (d) => colorForLabel(groups[d.source.index]!))
-    .attr('stroke-width', 0.5);
+    .attr('stroke-width', 0.5)
+    .style('cursor', 'pointer')
+    .on('click', (_event, d) => {
+      const a = groups[d.source.index]!;
+      const b = groups[d.target.index]!;
+      const key = pairKey(a, b);
+      const edges = edgesByPair.get(key) ?? [];
+      showAggregate(a, b, edges, vizById);
+    });
   ribbonSel.append('title').text((d) => {
     const a = groups[d.source.index]!;
     const b = groups[d.target.index]!;

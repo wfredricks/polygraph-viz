@@ -36,7 +36,13 @@ import {
 } from 'd3-force';
 import type { GraphExport, VizNode, VizEdge } from '../../types.js';
 import { colorForLabel, primaryLabel } from '../ui/palette.js';
-import { showNode, clearInspector, pickDisplayName, nodeMatches } from '../ui/inspector.js';
+import {
+  showNode,
+  showEdge,
+  clearInspector,
+  pickDisplayName,
+  nodeMatches,
+} from '../ui/inspector.js';
 import type { ViewHandle } from './types.js';
 
 interface ForceNode extends SimulationNodeDatum {
@@ -97,15 +103,45 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
 
   const layer = svg.append('g').attr('class', 'force-layer');
 
-  const linkSel = layer
-    .append('g')
-    .attr('class', 'links')
-    .selectAll<SVGLineElement, ForceLink>('line')
+  // Two-layer edges: a wide transparent hit-target line behind a thin
+  // visible line. The visible line gets the .edge class (themed via
+  // CSS); the hit-target line is invisible but catches pointer events.
+  // Why: 1-2px lines are nearly impossible to click. The halo gives
+  // the user a ~10px hit area without changing the visual.
+  const linkGroup = layer.append('g').attr('class', 'links');
+
+  linkGroup
+    .selectAll<SVGLineElement, ForceLink>('line.edge-hit')
+    .data(links, (d) => d.id)
+    .enter()
+    .append('line')
+    .attr('class', 'edge-hit')
+    .attr('stroke', 'transparent')
+    .attr('stroke-width', 10)
+    .style('cursor', 'pointer')
+    .append('title')
+    .text((d) => d.type);
+
+  const linkSel = linkGroup
+    .selectAll<SVGLineElement, ForceLink>('line.edge')
     .data(links, (d) => d.id)
     .enter()
     .append('line')
     .attr('class', 'edge')
-    .attr('stroke-width', 1.2);
+    .attr('stroke-width', 1.2)
+    .attr('pointer-events', 'none');
+
+  // The hit lines own the click handler; the visible lines own the look.
+  linkGroup
+    .selectAll<SVGLineElement, ForceLink>('line.edge-hit')
+    .on('click', (_event, d) => {
+      // Re-derive the original VizEdge for inspector display.
+      const original = graph.edges.find((e) => e.id === d.id);
+      if (!original) return;
+      const src = vizById.get(original.fromId);
+      const tgt = vizById.get(original.toId);
+      showEdge(original, src, tgt);
+    });
 
   const nodeSel = layer
     .append('g')
@@ -150,11 +186,19 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
     .force('center', forceCenter(width / 2, height / 2))
     .force('collide', forceCollide<ForceNode>().radius(18))
     .on('tick', () => {
-      linkSel
-        .attr('x1', (d) => (d.source as ForceNode).x ?? 0)
-        .attr('y1', (d) => (d.source as ForceNode).y ?? 0)
-        .attr('x2', (d) => (d.target as ForceNode).x ?? 0)
-        .attr('y2', (d) => (d.target as ForceNode).y ?? 0);
+      // Position both the visible edge and its hit-area halo at the
+      // same coordinates so click stays aligned with what the user sees.
+      const x1fn = (d: ForceLink): number => (d.source as ForceNode).x ?? 0;
+      const y1fn = (d: ForceLink): number => (d.source as ForceNode).y ?? 0;
+      const x2fn = (d: ForceLink): number => (d.target as ForceNode).x ?? 0;
+      const y2fn = (d: ForceLink): number => (d.target as ForceNode).y ?? 0;
+      linkSel.attr('x1', x1fn).attr('y1', y1fn).attr('x2', x2fn).attr('y2', y2fn);
+      linkGroup
+        .selectAll<SVGLineElement, ForceLink>('line.edge-hit')
+        .attr('x1', x1fn)
+        .attr('y1', y1fn)
+        .attr('x2', x2fn)
+        .attr('y2', y2fn);
       nodeSel.attr('transform', (d) => `translate(${d.x ?? 0},${d.y ?? 0})`);
     });
 
@@ -214,7 +258,10 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
           .select<SVGCircleElement>('circle')
           .attr('stroke-width', 0.8)
           .attr('stroke', null);
-        linkSel.style('opacity', 0.7);
+        linkSel.style('opacity', 0.9);
+        linkGroup
+          .selectAll<SVGLineElement, ForceLink>('line.edge-hit')
+          .style('pointer-events', 'auto');
         return;
       }
       const matchedIds = new Set<string>();
@@ -234,8 +281,17 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
       linkSel.style('opacity', (d) => {
         const s = (d.source as ForceNode).id;
         const t = (d.target as ForceNode).id;
-        return matchedIds.has(s) && matchedIds.has(t) ? 0.7 : 0.05;
+        return matchedIds.has(s) && matchedIds.has(t) ? 0.9 : 0.05;
       });
+      // Disable clicks on filtered-out edges so users don't open
+      // inspectors for things they can't even see.
+      linkGroup
+        .selectAll<SVGLineElement, ForceLink>('line.edge-hit')
+        .style('pointer-events', (d) => {
+          const s = (d.source as ForceNode).id;
+          const t = (d.target as ForceNode).id;
+          return matchedIds.has(s) && matchedIds.has(t) ? 'auto' : 'none';
+        });
     },
     destroy(): void {
       ro.disconnect();
