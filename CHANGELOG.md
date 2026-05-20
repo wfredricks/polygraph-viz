@@ -4,6 +4,20 @@ All notable changes to polygraph-viz follow [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-05-20
+
+### Added
+
+- **"Focus in Graph" button** on every chat-assistant message. Lights up all cited nodes in the active view via a multi-node constellation focus (union of 1-hop neighborhoods). Click again to clear. Honors the v0.2.4 ECharts-style focus pattern, extended to a node-set instead of a single node.
+- **"Render Subgraph" button** on every chat-assistant message. Replaces the renderer's input with a server-extracted subgraph of just the cited nodes + their 1-hop neighbors. A "← Back to full graph" pill appears in the stats footer to restore.
+- **`POST /api/subgraph`** server endpoint. Takes `{ nodeIds: string[], hops?: number, includeIncoming?: boolean, includeOutgoing?: boolean }` and returns a GraphExport-shaped response. Used by the Render Subgraph button.
+- **`ViewHandle.focus()`** now accepts `string[]` for multi-node focus. Force implements; Sankey + Chord accept the signature as typed no-ops (v0.3 deferred multi-node focus for those views).
+
+### Fixed
+
+- **Sankey link clicks now reliably open the edge inspector.** Thin link paths (1-2px stroke) and node rects covering link endpoints made clicks unreliable. Added a transparent hit-area halo layer above the visible ribbon (same two-layer pattern Force uses for thin edges).
+- **Sankey node rect clicks now open the node inspector.** A dynamic `import('../ui/inspector.js')` introduced in v0.2.1 didn't bundle correctly under tsup with `splitting: false`; replaced with a static import.
+
 ## [0.3.0] — 2026-05-20
 
 First NL-capable release. Adds natural-language search and a chat drawer that talks to the graph.
