@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PolyGraph Viz</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header id="toolbar">
+        <h1>PolyGraph Viz</h1>
+        <nav id="view-tabs" aria-label="View">
+          <button data-view="force" class="active">Force</button>
+          <button data-view="chord">Chord</button>
+          <button data-view="sankey">Sankey</button>
+        </nav>
+        <input id="search" type="search" placeholder="Search nodes…" />
+        <button id="theme-toggle" aria-label="Toggle light / dark">🌓</button>
+      </header>
+      <main>
+        <section id="viz" aria-label="Graph view">
+          <p class="placeholder">
+            Step B placeholder. Renderers wire up in steps E (Force), G (Chord), H
+            (Sankey). The toolbar is present so the shell is testable.
+          </p>
+        </section>
+        <aside id="inspector" aria-label="Node details" hidden></aside>
+      </main>
+      <footer id="stats" aria-label="Graph stats">
+        <span id="stats-counts">—</span>
+      </footer>
+    </div>
+    <script type="module" src="/client.js"></script>
+  </body>
+</html>

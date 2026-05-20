@@ -1,0 +1,95 @@
+/*
+ * polygraph-viz — base layout + theme palette.
+ *
+ * Step B places only the shell styles. The full palette + light/dark
+ * tokens land in step D.
+ */
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, #app { height: 100%; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Inter', sans-serif;
+  font-size: 13px;
+  background: #0e1019;
+  color: #e6e8f2;
+}
+
+#app {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+}
+
+#toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  background: #1a1d2e;
+  border-bottom: 1px solid #2a2e44;
+}
+
+#toolbar h1 {
+  font-size: 14px;
+  font-weight: 600;
+  margin-right: 12px;
+}
+
+#view-tabs button,
+#theme-toggle {
+  background: transparent;
+  border: 1px solid #3a3f55;
+  color: #e6e8f2;
+  padding: 4px 10px;
+  font: inherit;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+#view-tabs button.active {
+  background: #7aa2ff;
+  border-color: #7aa2ff;
+  color: #0e1019;
+}
+
+#search {
+  flex: 1;
+  max-width: 320px;
+  background: #0e1019;
+  border: 1px solid #3a3f55;
+  color: #e6e8f2;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font: inherit;
+}
+
+main {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  min-height: 0;
+}
+
+#viz {
+  position: relative;
+  overflow: hidden;
+}
+
+.placeholder {
+  padding: 24px;
+  color: #8a8fa3;
+}
+
+#inspector {
+  border-left: 1px solid #2a2e44;
+  padding: 12px;
+  overflow: auto;
+}
+
+#stats {
+  padding: 6px 14px;
+  font-size: 11px;
+  color: #8a8fa3;
+  background: #1a1d2e;
+  border-top: 1px solid #2a2e44;
+}

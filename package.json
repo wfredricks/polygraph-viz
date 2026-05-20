@@ -1,6 +1,6 @@
 {
   "name": "polygraph-viz",
-  "version": "0.1.1",
+  "version": "0.2.0-pre",
   "description": "Browser-based graph visualizer for PolyGraph — see your data",
   "author": "William Fredricks",
   "license": "Apache-2.0",
@@ -41,24 +41,46 @@
   },
   "files": [
     "dist",
-    "public",
+    "public/index.html",
+    "public/styles.css",
+    "public/client.js",
     "LICENSE",
     "README.md"
   ],
   "scripts": {
-    "dev": "npx tsx src/server.ts",
-    "build": "tsup src/cli.ts src/index.ts src/middleware.ts --format esm --dts",
+    "dev": "npx tsx src/cli.ts",
+    "dev:demo": "npx tsx src/cli.ts --demo",
+    "build": "npm run build:server && npm run build:client",
+    "build:server": "tsup src/cli.ts src/index.ts src/middleware.ts src/server.ts --format esm --dts",
+    "build:client": "tsup src/client/main.ts --format esm --out-dir public --minify --target=es2022 --platform=browser",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
     "@hono/node-server": "^2.0.1",
     "hono": "^4.12.18",
-    "polygraph-db": "file:../polygraph"
+    "polygraph-db": "file:../polygraph",
+    "d3-array": "^3.2.4",
+    "d3-chord": "^3.0.1",
+    "d3-drag": "^3.0.0",
+    "d3-force": "^3.0.0",
+    "d3-sankey": "^0.12.3",
+    "d3-scale": "^4.0.2",
+    "d3-selection": "^3.0.0",
+    "d3-shape": "^3.2.0",
+    "d3-zoom": "^3.0.0"
   },
   "devDependencies": {
+    "@types/d3-array": "^3.2.1",
+    "@types/d3-chord": "^6.0.3",
+    "@types/d3-drag": "^3.0.7",
+    "@types/d3-force": "^3.0.10",
+    "@types/d3-sankey": "^0.12.4",
+    "@types/d3-scale": "^4.0.8",
+    "@types/d3-selection": "^3.0.10",
+    "@types/d3-shape": "^3.1.6",
+    "@types/d3-zoom": "^3.0.8",
     "@types/node": "^25.0.0",
-    "d3": "^7.0.0",
     "tsup": "^8.0.0",
     "typescript": "^6.0.0",
     "vitest": "^4.0.0"
