@@ -43,7 +43,7 @@ export interface CommandArg {
 export interface CommandSpec {
   name: string;
   description: string;
-  category: 'slice' | 'focus' | 'reflect';
+  category: 'slice' | 'focus' | 'reflect' | 'manage';
   args: CommandArg[];
   run: (ctx: CommandContext, args: string[]) => Promise<void> | void;
 }
@@ -378,6 +378,46 @@ export const COMMANDS: CommandSpec[] = [
           `(${seg.seams} are seam nodes living in 2 segments). ` +
           `Top labels: ${top}.`,
       );
+    },
+  },
+  {
+    name: '/csv',
+    description: 'list (and download links for) the management CSVs',
+    category: 'manage',
+    args: [],
+    run: async (ctx) => {
+      try {
+        const r = await fetch('/api/csv/list');
+        if (!r.ok) {
+          ctx.echoSystem(`/api/csv/list returned ${r.status}`);
+          return;
+        }
+        const data = (await r.json()) as {
+          csvs: Array<{ name: string; description: string; kind: string }>;
+        };
+        const lines = ['**Available management CSVs** (click to download)'];
+        for (const c of data.csvs) {
+          lines.push(`[\`${c.name}.csv\`](/api/csv/${c.name}) — ${c.description}`);
+        }
+        lines.push('');
+        lines.push('To merge an edited CSV back into the graph, use `/csv-merge`.');
+        ctx.echoSystem(lines.join('\n\n'));
+      } catch (err) {
+        ctx.echoSystem(`/csv failed: ${String(err)}`);
+      }
+    },
+  },
+  {
+    name: '/csv-merge',
+    description: 'upload an edited CSV and additive-merge it into the graph',
+    category: 'manage',
+    args: [],
+    run: (ctx) => {
+      // The actual file picker + preview UI lives in chat.ts; this
+      // runner just signals the chat layer to mount the picker.
+      const ev = new CustomEvent('polygraph-viz:csv-merge-request', { bubbles: true });
+      document.dispatchEvent(ev);
+      ctx.echoSystem('Opening file picker — choose one of the downloaded CSVs after editing.');
     },
   },
   {

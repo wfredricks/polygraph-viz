@@ -28,6 +28,13 @@ import { computeSchemaFingerprint, rankWithLlm } from './nl/ranker.js';
 import { loadLexicon } from './nl/lexicon.js';
 import { KnowledgeBase } from './nl/kb.js';
 import { answerStream, answerOnce } from './nl/answerer.js';
+import {
+  CSV_SCHEMAS,
+  findSchema,
+  generateCsv,
+  previewMerge,
+  applyMerge,
+} from './nl/csv-portal.js';
 import type { ChatMessage } from './nl/bedrock.js';
 import {
   connectGraph,
@@ -74,22 +81,29 @@ function contentTypeFor(path: string): string {
 /**
  * Load the graph snapshot indicated by the config.
  *
+ * Returns the exported snapshot AND, when path-mode, the live PolyGraph
+ * instance so write paths (CSV merge) can mutate it. URL-mode and
+ * demo-mode return a null instance — those graphs are read-only by
+ * design (URL just proxies another viewer's state).
+ *
  * Exported so tests and the middleware can build a server around an
  * already-loaded graph without re-running this logic.
  */
-export async function loadGraph(config: VizConfig): Promise<GraphExport> {
+export async function loadGraph(
+  config: VizConfig,
+): Promise<{ graph: GraphExport; instance: any | null }> {
   if (config.demo) {
-    return buildDemoGraph();
+    return { graph: buildDemoGraph(), instance: null };
   }
   if (config.path) {
-    const graph = await connectGraph(config.path);
-    return exportGraph(graph);
+    const instance = await connectGraph(config.path);
+    return { graph: await exportGraph(instance), instance };
   }
   if (config.url) {
     const response = await fetch(config.url);
-    return (await response.json()) as GraphExport;
+    return { graph: (await response.json()) as GraphExport, instance: null };
   }
-  return buildDemoGraph();
+  return { graph: buildDemoGraph(), instance: null };
 }
 
 /**
@@ -117,6 +131,11 @@ export interface NlConfig {
 export interface BuildAppOptions {
   title?: string;
   nl?: NlConfig;
+  /**
+   * Live PolyGraph instance for write paths (CSV merge). Pass null for
+   * URL/demo modes where the graph is read-only.
+   */
+  polygraphInstance?: any | null;
 }
 
 export function buildApp(
@@ -124,6 +143,7 @@ export function buildApp(
   options: BuildAppOptions = {},
 ): Hono {
   const app = new Hono();
+  const connectedGraph = options.polygraphInstance ?? null;
   // Why: a default title so the viewer brands as itself when no
   // downstream product overrides; downstream products (e.g. SI's
   // si-sig-viz container) pass --title to rebrand.
@@ -562,6 +582,101 @@ data: ${JSON.stringify(data)}
         exportedAt: new Date().toISOString(),
       },
     });
+  });
+
+  // ── CSV portal ────────────────────────────────────────────────
+  // Download + additive-upsert merge interface for the build SIG.
+  // Lets operators manage the graph via spreadsheet round-trips.
+
+  app.get('/api/csv/list', (c) =>
+    c.json({
+      csvs: CSV_SCHEMAS.map((s) => ({
+        name: s.name,
+        description: s.description,
+        kind: s.kind,
+        columns: s.columns,
+        required: s.required,
+      })),
+    }),
+  );
+
+  app.get('/api/csv/:name', (c) => {
+    const name = c.req.param('name');
+    const csv = generateCsv(name, graphData);
+    if (csv === null) {
+      return c.json({ error: `unknown CSV: ${name}` }, 404);
+    }
+    return c.body(csv, 200, {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${name}.csv"`,
+    });
+  });
+
+  app.post('/api/csv/merge', async (c) => {
+    const body = (await c.req.json()) as { csvName?: string; csvText?: string };
+    if (!body.csvName || !body.csvText) {
+      return c.json({ error: 'csvName and csvText are required' }, 400);
+    }
+    const preview = previewMerge(body.csvName, body.csvText, graphData);
+    return c.json(preview);
+  });
+
+  app.post('/api/csv/merge/apply', async (c) => {
+    const body = (await c.req.json()) as { token?: string };
+    if (!body.token) {
+      return c.json({ error: 'token is required' }, 400);
+    }
+    // upsertNode + upsertEdge helpers that talk to PolyGraph.
+    if (!connectedGraph) {
+      return c.json({ error: 'no writable PolyGraph backend (url-mode or demo)' }, 503);
+    }
+    const upsertNode = async (
+      id: string,
+      labels: string[],
+      properties: Record<string, unknown>,
+    ): Promise<'created' | 'updated'> => {
+      const existing = await connectedGraph!.getNode(id);
+      if (existing) {
+        // Merge properties: pass the id + the property delta directly.
+        // PolyGraph.updateNode expects (id, propertiesToMerge).
+        const propDelta: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(properties)) {
+          if (v === undefined) continue;
+          propDelta[k] = v;
+        }
+        await connectedGraph!.updateNode(id, propDelta);
+        return 'updated';
+      }
+      await connectedGraph!.createNode(labels, properties, id);
+      return 'created';
+    };
+    const upsertEdge = async (
+      fromId: string,
+      toId: string,
+      type: string,
+      properties: Record<string, unknown>,
+    ): Promise<'created' | 'existed'> => {
+      // Dedupe: walk outbound neighbors of fromId and check for an
+      // existing (fromId, type, toId) triple. This is the fix for the
+      // v0.3.5 IMPLEMENTS_INTENT_OF doubling bug.
+      const neighbors = await connectedGraph!.getNeighbors(fromId, type, 'outgoing');
+      for (const { node, relationship } of neighbors) {
+        if (node.id === toId && relationship.type === type) {
+          return 'existed';
+        }
+      }
+      await connectedGraph!.createRelationship(fromId, toId, type, properties);
+      return 'created';
+    };
+    const result = await applyMerge(body.token, upsertNode, upsertEdge);
+    // Refresh graphData snapshot so subsequent /api/graph reads see the
+    // new state. Cheap re-export.
+    if (result.ok && connectedGraph) {
+      // exportGraph reads everything; for a 660-node graph this is fast.
+      const fresh = await exportGraph(connectedGraph);
+      Object.assign(graphData, fresh);
+    }
+    return c.json(result);
   });
 
   app.get('/api/kb', (c) => {

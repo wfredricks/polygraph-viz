@@ -901,3 +901,17 @@ body.chat-open #app main {
   background: var(--accent);
   color: var(--accent-ink);
 }
+
+/* ── Slash command category: manage ──────────────────────────── */
+.cmd-row-cat-manage { color: #cc79a7; }
+
+/* CSV Apply button — distinct enough from Save This to feel committal. */
+.chat-csv-apply {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.chat-csv-apply:hover { filter: brightness(1.1); }
+.chat-csv-apply:disabled { opacity: 0.5; }

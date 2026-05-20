@@ -493,6 +493,141 @@ export function installChat(opts: ChatBootOptions): void {
     }
   });
 
+  // ── CSV merge listener ─────────────────────────────────────
+  // The /csv-merge command dispatches a window event; we mount a
+  // hidden file input and trigger it. On selection, POST to
+  // /api/csv/merge, render the preview as a system message with an
+  // Apply button, and on Apply call /api/csv/merge/apply.
+  document.addEventListener('polygraph-viz:csv-merge-request', () => {
+    const picker = document.createElement('input');
+    picker.type = 'file';
+    picker.accept = '.csv,text/csv';
+    picker.style.display = 'none';
+    picker.addEventListener('change', async () => {
+      const file = picker.files?.[0];
+      picker.remove();
+      if (!file) return;
+      // Derive CSV name from filename: dom-files.csv -> dom-files.
+      const baseName = file.name.replace(/\.csv$/i, '');
+      const csvText = await file.text();
+      // POST to /api/csv/merge for preview.
+      let preview: {
+        csvName: string;
+        schemaOk: boolean;
+        schemaError?: string;
+        nodesToCreate?: number;
+        nodesToUpdate?: number;
+        edgesToCreate?: number;
+        edgesAlreadyExist?: number;
+        warnings?: string[];
+        token?: string;
+      };
+      try {
+        const r = await fetch('/api/csv/merge', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ csvName: baseName, csvText }),
+        });
+        preview = await r.json();
+      } catch (err) {
+        appendMessage({
+          id: `m-${Date.now()}-csv-err`,
+          role: 'assistant',
+          content: `_CSV preview failed: ${String(err)}_`,
+        });
+        return;
+      }
+      if (!preview.schemaOk) {
+        appendMessage({
+          id: `m-${Date.now()}-csv-bad`,
+          role: 'assistant',
+          content: `**CSV schema mismatch**\n\n${preview.schemaError ?? 'unknown error'}`,
+        });
+        return;
+      }
+      // Render the preview as a system-style message with an Apply button.
+      const previewId = `m-${Date.now()}-csv-preview`;
+      const previewMsg: ChatMessage = {
+        id: previewId,
+        role: 'assistant',
+        content:
+          `**CSV merge preview — _${preview.csvName}.csv_**\n\n` +
+          `- Nodes to create: ${preview.nodesToCreate}\n` +
+          `- Nodes to update: ${preview.nodesToUpdate}\n` +
+          `- Edges to create: ${preview.edgesToCreate}\n` +
+          `- Edges already exist: ${preview.edgesAlreadyExist}\n` +
+          (preview.warnings && preview.warnings.length > 0
+            ? `\n_${preview.warnings.length} warning(s):_ ` +
+              preview.warnings.slice(0, 5).map((w) => '• ' + w).join('\n')
+            : ''),
+      };
+      const msgEl = appendMessage(previewMsg);
+      // Add an Apply button after the message body.
+      const applyBtn = document.createElement('button');
+      applyBtn.type = 'button';
+      applyBtn.className = 'chat-tool chat-csv-apply';
+      applyBtn.textContent = 'Apply merge';
+      applyBtn.addEventListener('click', async () => {
+        applyBtn.disabled = true;
+        applyBtn.textContent = 'Applying…';
+        try {
+          const r = await fetch('/api/csv/merge/apply', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: preview.token }),
+          });
+          const result = (await r.json()) as {
+            ok: boolean;
+            error?: string;
+            nodesCreated?: number;
+            nodesUpdated?: number;
+            edgesCreated?: number;
+            edgesSkipped?: number;
+            warnings?: string[];
+          };
+          if (!result.ok) {
+            applyBtn.textContent = 'Apply failed';
+            appendMessage({
+              id: `m-${Date.now()}-csv-fail`,
+              role: 'assistant',
+              content: `_Merge failed: ${result.error ?? 'unknown error'}_`,
+            });
+            return;
+          }
+          applyBtn.textContent = 'Applied ✓';
+          appendMessage({
+            id: `m-${Date.now()}-csv-done`,
+            role: 'assistant',
+            content:
+              `**Merge applied** — ${preview.csvName}.csv\n\n` +
+              `- Nodes created: ${result.nodesCreated}\n` +
+              `- Nodes updated: ${result.nodesUpdated}\n` +
+              `- Edges created: ${result.edgesCreated}\n` +
+              `- Edges already existed: ${result.edgesSkipped}\n` +
+              (result.warnings && result.warnings.length > 0
+                ? `\n_${result.warnings.length} warning(s):_ ` +
+                  result.warnings.slice(0, 5).map((w) => '• ' + w).join('\n')
+                : '') +
+              `\n\nRefresh the page to see the new state in the active view.`,
+          });
+        } catch (err) {
+          applyBtn.textContent = 'Apply failed';
+          appendMessage({
+            id: `m-${Date.now()}-csv-fail`,
+            role: 'assistant',
+            content: `_Merge failed: ${String(err)}_`,
+          });
+        }
+      });
+      const tools = document.createElement('div');
+      tools.className = 'chat-msg-tools';
+      tools.appendChild(applyBtn);
+      msgEl.appendChild(tools);
+    });
+    document.body.appendChild(picker);
+    picker.click();
+  });
+
   // Initial render of saved messages.
   rerenderAll();
   applyOpen(state.open);

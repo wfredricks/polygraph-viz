@@ -106,8 +106,9 @@ async function main(): Promise<void> {
     console.log(`🎨 PolyGraph Visualizer — Remote: ${config.url}`);
   }
 
-  const graphData = await loadGraph(config);
+  const { graph: graphData, instance: polygraphInstance } = await loadGraph(config);
   const app = buildApp(graphData, {
+    polygraphInstance,
     title: config.title,
     nl: {
       provider: config.nlSearch ?? 'off',

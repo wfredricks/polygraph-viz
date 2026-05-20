@@ -4,6 +4,31 @@ All notable changes to polygraph-viz follow [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.3.6] — 2026-05-20
+
+### Added
+
+- **CSV portal — download + additive-upsert merge** for graph management via spreadsheet round-trips. Per Bill's 16:58 EDT request.
+- **`GET /api/csv/list`** — lists the 7 supported CSVs with their column schemas.
+- **`GET /api/csv/:name`** — generates the named CSV from live graph state on the fly. Sets `Content-Disposition: attachment` so browsers download.
+- **`POST /api/csv/merge`** — preview endpoint. Validates schema, parses CSV, computes nodes-to-create / nodes-to-update / edges-to-create / edges-already-exist counts. Returns a token. No mutations.
+- **`POST /api/csv/merge/apply`** — applies the preview captured under `token` to the live PolyGraph. Idempotent — re-running the same CSV produces zero new writes.
+- **`/csv` chat command** — lists the CSVs with one-click download links.
+- **`/csv-merge` chat command** — opens a file picker; on selection POSTs to `/api/csv/merge`; renders preview as a system-style chat message with an **Apply merge** button; on apply, calls `/api/csv/merge/apply` and reports the result.
+- **`'manage'` command category** in the slash palette.
+
+### Protocol
+
+**Protocol A — additive-only upsert.** Rows in the uploaded CSV are upserted (created-if-new, updated-if-exists). Rows missing from the upload are LEFT ALONE — no deletes through this channel. Deletes get an optional `_action: delete` tombstone column in v0.4+ when the use case shows up.
+
+### Fixed
+
+- **`IMPLEMENTS_INTENT_OF` edges no longer double** on re-ingest. v0.3.5's load-fillin loader used a direct `createRelationship` without checking for existing edges; PolyGraph happily creates duplicates. The new `upsertEdge` helper queries `getNeighbors` first and skips if the (from, type, to) triple already exists. The CSV merge path uses this helper for ALL edges, so re-uploading a CSV will not double anything.
+
+### Limitations
+
+- CSV merge is gated on the server having a writable PolyGraph instance — works in `--path` mode (local viewer with LevelDB), returns 503 in `--url` or `--demo` mode. The iLabs deployment runs in URL-mode behind the ALB, so iLabs is read-only by design. Pattern: download CSV from iLabs → edit → upload to local viewer → `npm run clone:ilabs:confirm` to propagate.
+
 ## [0.3.5] — 2026-05-20
 
 ### Added
