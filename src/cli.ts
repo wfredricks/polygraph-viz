@@ -81,6 +81,12 @@ function parseArgs(argv: string[]): VizConfig {
       case '--kb':
         config.kbPath = args[++i];
         break;
+      case '--full-graph-path':
+        // Why: optional secondary full-graph store used to drill down from
+        // meta.area nodes into the actual domain nodes (features, tables, BOs)
+        // without having to run the full graph as the primary viewer.
+        config.fullGraphPath = args[++i];
+        break;
       default:
         // Why: forward-compat — silently ignore unknown flags so an older
         // CLI keeps working when a newer wrapper adds options.
@@ -106,9 +112,10 @@ async function main(): Promise<void> {
     console.log(`🎨 PolyGraph Visualizer — Remote: ${config.url}`);
   }
 
-  const { graph: graphData, instance: polygraphInstance } = await loadGraph(config);
+  const { graph: graphData, instance: polygraphInstance, fullGraph: fullGraphData } = await loadGraph(config);
   const app = buildApp(graphData, {
     polygraphInstance,
+    fullGraphData,
     title: config.title,
     nl: {
       provider: config.nlSearch ?? 'off',

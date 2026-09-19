@@ -31,6 +31,10 @@ export interface CommandContext {
   switchView: (view: 'force' | 'chord' | 'sankey') => void;
   /** Active filter state; commands set this so the palette can show a "Filter: biz" pill. */
   setActiveFilter: (label: string | null) => void;
+  /** Whether currently in a subgraph drill-down. */
+  isInSubgraph: () => boolean;
+  /** Restore the full graph from subgraph mode. */
+  restoreFullGraph: () => void;
 }
 
 export interface CommandArg {
@@ -59,7 +63,7 @@ export function exampleForArg(
 ): string {
   switch (arg.exampleSourceKind) {
     case 'segment': {
-      return 'biz, dom, imp, meta';
+      return 'dat, biz, dom, imp, meta';
     }
     case 'label': {
       const labelSet = new Set<string>();
@@ -184,15 +188,42 @@ export const COMMANDS: CommandSpec[] = [
   // ── SLICE ─────────────────────────────────────────────────────────
   {
     name: '/all',
-    description: 'restore the full graph (clear all filters + focus)',
+    description: 'restore the full graph (clear all filters + focus + subgraph)',
     category: 'slice',
     args: [],
     run: (ctx) => {
+      if (ctx.isInSubgraph()) {
+        ctx.restoreFullGraph();
+        ctx.echoSystem('Restored full graph.');
+        return;
+      }
       const v = ctx.getView();
       v.focus(null);
       v.setFilter(null);
       ctx.setActiveFilter(null);
       ctx.echoSystem('Filters cleared. Showing full graph.');
+    },
+  },
+  {
+    name: '/dat',
+    description: 'data layer: as-is database tables, columns, relationships',
+    category: 'slice',
+    args: [],
+    run: (ctx) => {
+      const r = nodesInSliceOfSegment(ctx.graph, 'dat');
+      if (r.coreCount === 0) {
+        ctx.echoSystem(
+          'No data-layer nodes yet — data.table / data.column / data.fk nodes are loaded from the as-is data model.',
+        );
+        return;
+      }
+      const v = ctx.getView();
+      v.focus(null);
+      v.setFilter(r.ids);
+      ctx.setActiveFilter('dat');
+      ctx.echoSystem(
+        `Filtered to dat slice: ${r.coreCount} data-layer nodes (tables/columns/relationships) = ${r.sliceCount} total.`,
+      );
     },
   },
   {
@@ -228,8 +259,26 @@ export const COMMANDS: CommandSpec[] = [
     },
   },
   {
+    name: '/biz+dom',
+    description: 'show biz and dom layers together',
+    category: 'slice',
+    args: [],
+    run: (ctx) => {
+      const biz = nodesInSliceOfSegment(ctx.graph, 'biz');
+      const dom = nodesInSliceOfSegment(ctx.graph, 'dom');
+      const combined = [...new Set([...biz.ids, ...dom.ids])];
+      const v = ctx.getView();
+      v.focus(null);
+      v.setFilter(combined);
+      ctx.setActiveFilter('biz+dom');
+      ctx.echoSystem(
+        `Filtered to biz+dom: ${biz.coreCount} biz + ${dom.coreCount} dom = ${combined.length} total nodes.`,
+      );
+    },
+  },
+  {
     name: '/imp',
-    description: 'imp layer: paradigm-bound targets (cs_2026, sn_, next_, ...)',
+    description: 'imp layer: paradigm-bound targets (cs_2026, sn_, next_, ...',
     category: 'slice',
     args: [],
     run: (ctx) => {
@@ -392,7 +441,7 @@ export const COMMANDS: CommandSpec[] = [
         .join(', ');
       ctx.echoSystem(
         `**Graph stats** — ${ctx.graph.nodes.length} nodes, ${ctx.graph.edges.length} edges. ` +
-          `Segment members: biz ${seg.biz}, dom ${seg.dom}, imp ${seg.imp}, meta ${seg.meta} ` +
+          `Segment members: dat ${seg.dat}, biz ${seg.biz}, dom ${seg.dom}, imp ${seg.imp}, meta ${seg.meta} ` +
           `(${seg.seams} are seam nodes living in 2 segments). ` +
           `Top labels: ${top}.`,
       );

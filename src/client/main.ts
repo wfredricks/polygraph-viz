@@ -23,14 +23,18 @@ import type { GraphExport } from '../types.js';
 import { installTheme } from './ui/theme.js';
 import { installToolbar, type ViewKey } from './ui/toolbar.js';
 import { renderStats } from './ui/stats.js';
-import { renderForce } from './views/force.js';
+import { renderForce, connectVisible } from './views/force.js';
 import { renderChord } from './views/chord.js';
 import { renderSankey } from './views/sankey.js';
 import type { ViewHandle } from './views/types.js';
 import { NULL_HANDLE } from './views/types.js';
+import { nodeMatches } from './ui/inspector.js';
 import { installChat } from './ui/chat.js';
 import { installCommandPalette } from './ui/command-palette.js';
 import type { CommandContext } from './ui/commands.js';
+import { installSidebar } from './ui/sidebar.js';
+import { seedFromMetaNodes } from './ui/palette.js';
+import { openGenerate } from './ui/generate.js';
 
 interface AppState {
   /** The graph currently being rendered. May be the full /api/graph snapshot or a subgraph. */
@@ -240,6 +244,59 @@ async function showSubgraph(citedNodes: string[], title: string): Promise<void> 
 
 async function boot(): Promise<void> {
   installTheme();
+
+  // Back-to-all button: restore full graph from subgraph
+  const backBtn = document.getElementById('back-to-all');
+
+  function updateBackButton(): void {
+    if (backBtn) {
+      backBtn.style.display = state.inSubgraph ? '' : 'none';
+    }
+  }
+
+  if (backBtn) {
+    backBtn.addEventListener('click', () => {
+      if (!state.fullGraph) return;
+      state.graph = state.fullGraph;
+      state.inSubgraph = false;
+      state.subgraphTitle = '';
+      state.currentSearch = '';
+      state.activeFilter = null;
+      switchView(state.currentView);
+      refreshStatusLine();
+      updateBackButton();
+    });
+  }
+
+  // Refit button: extract visible nodes into a clean subgraph view
+  // Connect button: draw edges between all currently visible nodes
+  const connectBtn = document.getElementById('connect-btn');
+  if (connectBtn) {
+    connectBtn.addEventListener('click', async () => {
+      connectBtn.textContent = '⏳';
+      connectBtn.setAttribute('disabled', 'true');
+      const added = await connectVisible();
+      connectBtn.textContent = '⛓';
+      connectBtn.removeAttribute('disabled');
+      if (added > 0) console.log(`[connect] ${added} new edge${added === 1 ? '' : 's'} drawn`);
+    });
+  }
+
+  const refitBtn = document.getElementById('refit-btn');
+  if (refitBtn) {
+    refitBtn.addEventListener('click', () => {
+      // Zoom to fit all nodes currently on the canvas.
+      state.currentHandle.refit();
+    });
+  }
+
+  const generateBtn = document.getElementById('generate-btn');
+  if (generateBtn) {
+    generateBtn.addEventListener('click', () => {
+      void openGenerate();
+    });
+  }
+
   installToolbar({
     onViewChange: (view) => switchView(view),
     onSearch: (q) => {
@@ -249,8 +306,25 @@ async function boot(): Promise<void> {
   });
 
   try {
-    state.fullGraph = await fetchGraph();
-    state.graph = state.fullGraph;
+    // Fetch the full graph for metadata and codes seeding only.
+    // Do NOT render it directly — 13K+ nodes crashes the force layout.
+    // The sidebar tree adds nodes incrementally on demand.
+    // Why blank start: the tree nav IS the exploration UI; the full graph
+    // is a server-side index, not a thing the browser should ever render whole.
+    const fullGraphData = await fetchGraph();
+
+    // Seed label colors from meta.label nodes in the graph data.
+    // Must happen before sidebar install so swatches use graph-defined colors.
+    seedFromMetaNodes(fullGraphData);
+
+    const blank: GraphExport = {
+      nodes: [],
+      edges: [],
+      metadata: { ...fullGraphData.metadata, nodeCount: 0, edgeCount: 0 },
+    };
+    state.fullGraph = blank; // "back to full graph" = back to blank home state
+    state.graph = blank;
+
     // Fetch the code map up front so focusNode resolves instantly
     // without per-click /api/resolve round-trips. Falls back to the
     // server resolver if a token is missing from the cache.
@@ -269,6 +343,12 @@ async function boot(): Promise<void> {
     refreshStatusLine();
     switchView(state.currentView);
 
+    // Install the dynamic label sidebar (fetches /api/stats for label discovery).
+    const sidebarEl = document.getElementById('sidebar');
+    if (sidebarEl) {
+      void installSidebar(sidebarEl);
+    }
+
     // Build the slash-command context once. The palette reuses it.
     const ctx: CommandContext = {
       get graph() {
@@ -284,6 +364,18 @@ async function boot(): Promise<void> {
       setActiveFilter: (label) => {
         state.activeFilter = label;
         refreshStatusLine();
+      },
+      isInSubgraph: () => state.inSubgraph,
+      restoreFullGraph: () => {
+        if (!state.fullGraph) return;
+        state.graph = state.fullGraph;
+        state.inSubgraph = false;
+        state.subgraphTitle = '';
+        state.currentSearch = '';
+        state.activeFilter = null;
+        switchView(state.currentView);
+        refreshStatusLine();
+        updateBackButton();
       },
     };
 

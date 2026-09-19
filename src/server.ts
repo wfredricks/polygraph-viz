@@ -87,24 +87,42 @@ function contentTypeFor(path: string): string {
  * demo-mode return a null instance — those graphs are read-only by
  * design (URL just proxies another viewer's state).
  *
+ * When `config.fullGraphPath` is set, also opens the secondary full graph
+ * as a read-only snapshot for `meta.area` drill-down in `/api/neighbors`.
+ *
  * Exported so tests and the middleware can build a server around an
  * already-loaded graph without re-running this logic.
  */
 export async function loadGraph(
   config: VizConfig,
-): Promise<{ graph: GraphExport; instance: any | null }> {
+): Promise<{ graph: GraphExport; instance: any | null; fullGraph: GraphExport | null }> {
+  // Load the optional secondary full graph first (read-only, opened and closed).
+  let fullGraph: GraphExport | null = null;
+  if (config.fullGraphPath) {
+    console.log(`  🗺️  Loading full graph from: ${config.fullGraphPath}`);
+    const fullInstance = await connectGraph(config.fullGraphPath);
+    fullGraph = await exportGraph(fullInstance);
+    // Why: the full graph is opened read-only for drill-down; we close it
+    // immediately after export to release LevelDB locks. The snapshot is
+    // held in memory for the lifetime of the server process.
+    try { await (fullInstance as any).close?.(); } catch { /* ignore */ }
+    console.log(
+      `  🗺️  Full graph loaded: ${fullGraph.nodes.length} nodes, ${fullGraph.edges.length} edges`,
+    );
+  }
+
   if (config.demo) {
-    return { graph: buildDemoGraph(), instance: null };
+    return { graph: buildDemoGraph(), instance: null, fullGraph };
   }
   if (config.path) {
     const instance = await connectGraph(config.path);
-    return { graph: await exportGraph(instance), instance };
+    return { graph: await exportGraph(instance), instance, fullGraph };
   }
   if (config.url) {
     const response = await fetch(config.url);
-    return { graph: (await response.json()) as GraphExport, instance: null };
+    return { graph: (await response.json()) as GraphExport, instance: null, fullGraph };
   }
-  return { graph: buildDemoGraph(), instance: null };
+  return { graph: buildDemoGraph(), instance: null, fullGraph };
 }
 
 /**
@@ -137,7 +155,77 @@ export interface BuildAppOptions {
    * URL/demo modes where the graph is read-only.
    */
   polygraphInstance?: any | null;
+  /**
+   * Optional read-only snapshot of the secondary full graph.
+   *
+   * When present, `/api/neighbors/:nodeId` will drill down from `meta.area`
+   * nodes into this full graph to surface domain nodes (sw.feature,
+   * data.table, sw.business_object) for the area — instead of returning
+   * the sparse meta-graph neighbors. All other node types use the primary
+   * graph as normal.
+   */
+  fullGraphData?: GraphExport | null;
 }
+
+// ─── Meta-area drill-down helpers ───────────────────────────────────────────
+
+/**
+ * Slug patterns for every `meta.area` node — mirrors the `slugPatterns`
+ * arrays defined in build-meta-graph.ts so the server can reverse-map an
+ * area node back to the full-graph nodes that belong to it.
+ *
+ * Exported for unit testing.
+ */
+export const AREA_SLUG_PATTERNS: Readonly<Record<string, RegExp[]>> = {
+  'area.customer-orders':   [/customer-order/, /redo-customer-order/],
+  'area.customer-receipts': [/customer-receipt/, /redo-customer-receipt/],
+  'area.customer-catalog':  [/customer-catalog/, /redo-customer-catalog/, /customer-stocknum/, /redo-customer-stocknum/],
+  'area.customer-bizlogic': [/customer-bizlogic/, /redo-customer-bizlogic/, /customer-bizdata/, /redo-customer-bizdata/],
+  'area.customer-other':    [/biz-customer/, /customer-other/, /redo-customer-other/],
+  'area.account-mgmt':      [/^acct-/, /redo-logon/, /redo-facility/],
+  'area.admin':             [/biz-admin/, /redo-admin/, /sysman/, /infra-biz/, /common-/],
+  'area.catalog-mgmt':      [/^catalog-/, /stknomaint/, /mnfcmaint/],
+  'area.reports':           [/^reports-/, /biz-admin-reports/],
+  'area.batch':             [/^batch-/],
+  'area.trading-partner':   [/tradingpartner/, /redo-tradingpartner/],
+  'area.audit-recon':       [/redo-audit/, /redo-storesrecon/, /redo-mrvmgr/, /redo-servicemaint/],
+  'area.other':             [/biz-other/, /infra-data/, /redo-facility/],
+};
+
+/** Returns true if `slug` matches at least one pattern in `patterns`. */
+function slugMatchesAny(slug: string, patterns: RegExp[]): boolean {
+  return patterns.some((p) => p.test(slug));
+}
+
+/**
+ * Returns true if `node` belongs to the given area as determined by the
+ * same slug-pattern logic used in build-meta-graph.ts.
+ *
+ * Supported labels:
+ *   - sw.feature         → `properties.segment` (single string)
+ *   - data.table         → `properties.segments` (JSON array; uses first element)
+ *   - sw.business_object → `properties.segments` (single string)
+ *
+ * Exported for unit testing.
+ */
+export function matchesDomainNode(node: import('./types.js').VizNode, patterns: RegExp[]): boolean {
+  if (node.labels.includes('sw.feature')) {
+    const seg = (node.properties['segment'] as string) ?? '';
+    return seg.length > 0 && slugMatchesAny(seg, patterns);
+  }
+  if (node.labels.includes('data.table')) {
+    let segs: string[] = [];
+    try { segs = JSON.parse((node.properties['segments'] as string) ?? '[]'); } catch { /* malformed — skip */ }
+    return segs.length > 0 && slugMatchesAny(segs[0], patterns);
+  }
+  if (node.labels.includes('sw.business_object')) {
+    const segs = (node.properties['segments'] as string) ?? '';
+    return segs.length > 0 && slugMatchesAny(segs, patterns);
+  }
+  return false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 export function buildApp(
   graphData: GraphExport,
@@ -145,9 +233,19 @@ export function buildApp(
 ): Hono {
   const app = new Hono();
   const connectedGraph = options.polygraphInstance ?? null;
+  const fullGraphData = options.fullGraphData ?? null;
+  if (fullGraphData) {
+    console.log(
+      `  🔍  Full-graph drill-down active: ${fullGraphData.nodes.length} nodes available for meta.area expansion`,
+    );
+  }
   // Why: a default title so the viewer brands as itself when no
   // downstream product overrides; downstream products (e.g. SI's
   // si-sig-viz container) pass --title to rebrand.
+  // @adopt:app-title  [resolved: pass --title "MPAI Constellation" at launch]
+  // The window title and browser tab name. Pass --title <name> to the CLI,
+  // or set options.title when embedding. Default 'PolyGraph Viz' is the
+  // generic brand; adoptions should always override this.
   const title = (options.title ?? 'PolyGraph Viz').replace(/[<>"']/g, '');
   const nlConfig: NlConfig = options.nl ?? { provider: 'off' };
   const nlEnabled = nlConfig.provider !== 'off';
@@ -321,7 +419,132 @@ export function buildApp(
     if (!id) return c.json({ token, id: null }, 404);
     return c.json({ token, id });
   });
+  /**
+   * Neighbors endpoint: 1-hop neighborhood of a node (both directions)
+   * plus the edges that connect them. Used by the Force-view
+   * "Expand neighbors" right-click action.
+   *
+   * Special case — meta.area drill-down:
+   *   When the primary graph node has label `meta.area` AND a secondary
+   *   full-graph snapshot is loaded (via --full-graph-path), this endpoint
+   *   returns the matching domain nodes from the full graph (sw.feature,
+   *   data.table, sw.business_object) instead of the sparse meta-graph
+   *   neighbors. This lets the user drill from a high-level area node
+   *   directly into the real domain content without switching graphs.
+   *
+   * Capped at 200 domain nodes to avoid flooding the canvas.
+   *
+   * Response: { nodeId, nodes: VizNode[], edges: VizEdge[] }
+   */
+  app.get('/api/neighbors/:nodeId', (c) => {
+    const nodeId = c.req.param('nodeId');
+    const nodeIndex = new Map(graphData.nodes.map((n) => [n.id, n]));
+    const originNode = nodeIndex.get(nodeId);
+    if (!originNode) {
+      return c.json({ error: `node not found: ${nodeId}` }, 404);
+    }
+
+    // ── Meta-area drill-down ───────────────────────────────────────────────
+    if (originNode.labels.includes('meta.area') && fullGraphData !== null) {
+      const patterns = AREA_SLUG_PATTERNS[nodeId];
+      if (patterns) {
+        const domainNodes: import('./types.js').VizNode[] = [];
+        for (const n of fullGraphData.nodes) {
+          if (matchesDomainNode(n, patterns)) {
+            domainNodes.push(n);
+            if (domainNodes.length >= 200) break; // cap to avoid canvas flood
+          }
+        }
+        const matchedIds = new Set(domainNodes.map((n) => n.id));
+        const domainEdges = fullGraphData.edges.filter(
+          (e) => matchedIds.has(e.fromId) && matchedIds.has(e.toId),
+        );
+        // Add synthetic IN_AREA edges anchoring each domain node to the
+        // meta.area origin node — keeps the expanded cluster visually tethered.
+        const anchorEdges = domainNodes.map((n) => ({
+          id:         `in-area:${nodeId}:${n.id}`,
+          type:       'IN_AREA',
+          fromId:     nodeId,
+          toId:       n.id,
+          properties: {},
+        }));
+        return c.json({ nodeId, nodes: [originNode, ...domainNodes], edges: [...domainEdges, ...anchorEdges] });
+      }
+    }
+
+    // ── Default: 1-hop neighbors from primary graph ──────────────────────────
+    // All edges touching this node.
+    const edges = graphData.edges.filter(
+      (e) => e.fromId === nodeId || e.toId === nodeId,
+    );
+    // Collect unique neighbor IDs.
+    const neighborIds = new Set<string>();
+    for (const e of edges) {
+      if (e.fromId !== nodeId) neighborIds.add(e.fromId);
+      if (e.toId !== nodeId) neighborIds.add(e.toId);
+    }
+    const nodes = [
+      originNode,
+      ...[...neighborIds]
+        .map((id) => nodeIndex.get(id))
+        .filter((n): n is NonNullable<typeof n> => n !== undefined),
+    ];
+    return c.json({ nodeId, nodes, edges });
+  });
   app.get('/api/stats', (c) => c.json(computeStats(graphData)));
+
+  /**
+   * Nodes-by-label endpoint: returns nodes from the full graph (or primary
+   * graph as fallback) that match ANY of the given label(s).
+   *
+   * Labels that live in the full graph: sw.feature, sw.business_object,
+   * use_case, requirement, system_use_case, Segment, dom.entity, dom.rule,
+   * dom.state, dom.transition, data.table, data.dto, data.enum.
+   *
+   * Capped at 500 nodes to avoid canvas flood.
+   *
+   * GET /api/nodes-by-label?labels=sw.business_object,use_case
+   * Response: { labels: string[], nodes: VizNode[], edges: VizEdge[] }
+   */
+  app.get('/api/nodes-by-label', (c) => {
+    const labelsParam = c.req.query('labels') ?? '';
+    const labels = labelsParam.split(',').map((l) => l.trim()).filter(Boolean);
+    if (labels.length === 0) {
+      return c.json({ error: 'labels query param is required' }, 400);
+    }
+    // Cap: default 500, overridable via ?limit=N (max 5000 to prevent runaway)
+    const requestedLimit = parseInt(c.req.query('limit') ?? '500', 10);
+    const cap = Math.min(Math.max(requestedLimit, 1), 5000);
+    // Labels that exist only in the full graph (not the meta-graph).
+    // For these, query fullGraphData when available.
+    const FULL_GRAPH_LABELS = new Set([
+      'sw.feature', 'sw.business_object', 'use_case', 'requirement',
+      'system_use_case', 'Segment', 'ParentSegment', 'dom.entity', 'dom.rule',
+      'dom.state', 'dom.transition', 'data.table', 'data.dto', 'data.enum',
+      'code.file', 'code.class',
+    ]);
+    const labelSet = new Set(labels);
+    const needsFull = labels.some((l) => FULL_GRAPH_LABELS.has(l));
+    const source = needsFull && fullGraphData ? fullGraphData : graphData;
+    const matched: import('./types.js').VizNode[] = [];
+    for (const n of source.nodes) {
+      if (n.labels.some((l) => labelSet.has(l))) {
+        matched.push(n);
+        if (matched.length >= cap) break;
+      }
+    }
+    const matchedIds = new Set(matched.map((n) => n.id));
+    // Return edges where at least one endpoint is in the matched set.
+    // The client will render only edges where both endpoints are in the canvas;
+    // using OR means cross-type edges (requirement→feature, feature→table) become
+    // visible as the user adds more node types to the canvas.
+    const edgeCap = 2000;
+    const edges = source.edges
+      .filter((e) => matchedIds.has(e.fromId) || matchedIds.has(e.toId))
+      .slice(0, edgeCap);
+    return c.json({ labels, nodes: matched, edges });
+  });
+
   app.get('/api/search', (c) => {
     const q = c.req.query('q') || '';
     return c.json(searchNodes(graphData, q));

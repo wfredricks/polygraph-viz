@@ -3,6 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- @adopt:app-title  [resolved: pass --title to the CLI or set options.title; default is 'PolyGraph Viz'] -->
     <title>{{TITLE}}</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
@@ -10,15 +11,20 @@
     <div id="app">
       <header id="toolbar">
         <h1>{{TITLE}}</h1>
+        <button id="back-to-all" style="display:none" aria-label="Back to full graph">← All</button>
         <nav id="view-tabs" aria-label="View">
           <button data-view="force" class="active">Force</button>
           <button data-view="chord">Chord</button>
           <button data-view="sankey">Sankey</button>
         </nav>
         <input id="search" type="search" placeholder="Search nodes…" />
+        <button id="refit-btn" aria-label="Refit visible nodes" title="Refit visible nodes">⊡</button>
+        <button id="generate-btn" aria-label="Generate from checked labels" title="Generate story from graph">✦</button>
+        <button id="connect-btn" aria-label="Draw connections between visible nodes" title="Draw connections">⛓</button>
         <button id="theme-toggle" aria-label="Toggle light / dark">🌓</button>
       </header>
       <main>
+        <nav id="sidebar" aria-label="Label navigation"></nav>
         <section id="viz" aria-label="Graph view">
           <p class="placeholder">
             Step B placeholder. Renderers wire up in steps E (Force), G (Chord), H
@@ -31,6 +37,6 @@
         <span id="stats-counts">—</span>
       </footer>
     </div>
-    <script type="module" src="/client.js"></script>
+    <script type="module" src="/client.js?v=2d7c3554"></script>
   </body>
 </html>

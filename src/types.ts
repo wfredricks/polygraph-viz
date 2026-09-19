@@ -103,6 +103,23 @@ export interface VizConfig {
    * in-memory KB for URL / demo mode.
    */
   kbPath?: string;
+  /**
+   * Optional path to a secondary "full graph" LevelDB store.
+   *
+   * When set, the `/api/neighbors/:nodeId` endpoint will drill down from
+   * `meta.area` nodes in the primary graph into the full graph to return
+   * the matching domain nodes (sw.feature, data.table, sw.business_object)
+   * for that area — rather than returning only the sparse meta-graph
+   * neighbors. For all other node types, the primary graph is used as
+   * normal.
+   *
+   * Example:
+   *   npx polygraph-viz \
+   *     --path ./meta-graph \
+   *     --full-graph-path ./polygraph \
+   *     --port 4445
+   */
+  fullGraphPath?: string;
   /** Theme configuration */
   theme?: ThemeConfig;
   /** Default layout mode */

@@ -47,6 +47,8 @@ export interface ViewHandle {
    * need precise membership semantics that ignore adjacency.
    */
   setFilter(keepIds: string[] | null): void;
+  /** Re-cluster visible nodes and zoom to fit. */
+  refit(): void;
 }
 
 /**
@@ -57,4 +59,5 @@ export const NULL_HANDLE: ViewHandle = {
   destroy: () => undefined,
   focus: () => undefined,
   setFilter: () => undefined,
+  refit: () => undefined,
 };

@@ -1,91 +1,230 @@
 /**
- * Label-to-color assignment.
+ * Label → visual encoding: color, shape, size.
  *
- * v0.2.4 and earlier used a deterministic FNV-1a hash of the label name
- * modulo a 12-color palette. The hash gave per-label stability across
- * reloads, but produced visible collisions even on small graphs: in
- * the SI build SIG, `sw.feature` and `sw.stage` both landed on light
- * purple, `intended_behavior` and `Role` and `Narrative` all landed
- * on orange, and so on.
+ * All visual properties are **deterministic from the label name alone** —
+ * no hardcoded domain maps, no graph-context needed. Point PolyGraph Viz
+ * at any database and every label gets a stable, distinguishable look.
  *
- * v0.2.5 fixes this by:
+ * Design:
+ *   - **Color:** FNV-1a hash of the label → HSL hue. Labels sharing a
+ *     dot-prefix (e.g. `data.table`, `data.column`) get hues in the same
+ *     neighborhood (±30° of the prefix's base hue) so they read as a
+ *     visual family.
+ *   - **Shape:** d3-shape symbols, assigned per prefix group. All `data.*`
+ *     labels share one shape, all `dom.*` another, etc. Ungrouped labels
+ *     each get a shape from their own name hash.
+ *   - **Size:** uniform base (area ≈ 150 px²). Easy to add variation later.
  *
- *   1. Assigning colors by ORDER-OF-FIRST-APPEARANCE into a palette,
- *      not by hash. The first distinct label gets palette[0], the
- *      second gets palette[1], and so on. This guarantees zero
- *      collisions when distinct-label-count ≤ palette-size.
- *
- *   2. Sorting the input label list deterministically (alphabetically)
- *      before assignment so the same graph reloads to the same colors.
- *
- *   3. Extending the palette from 12 to 16 colorblind-aware hues for
- *      headroom. The first 8 are the Okabe-Ito set (the de-facto
- *      colorblind-safe palette); the next 8 are interpolated hues
- *      that maintain reasonable distinguishability from each other
- *      and from the Okabe-Ito set.
- *
- *   4. When the graph has >16 distinct labels, falling back to an HSL
- *      rotation that distributes additional labels around the color
- *      wheel evenly. We never reuse a palette slot — collisions become
- *      impossible by construction.
- *
- * Usage pattern:
- *   const cm = buildColorMap(graph.nodes);
- *   cm.colorForLabel('sw.feature')    // -> '#56b4e9'
- *   cm.entries                         // -> [{ label, color }, ...] for the legend
- *   primaryLabel(node.labels)          // unchanged
+ * The Okabe-Ito palette is retained as a fallback for the `buildColorMap`
+ * legend (which still cycles colors for small graphs), but the primary
+ * coloring path is `autoColor()`.
  */
 
+import {
+  symbol as d3Symbol,
+  symbolCircle,
+  symbolCross,
+  symbolDiamond,
+  symbolSquare,
+  symbolStar,
+  symbolTriangle2,
+  symbolWye,
+  type SymbolType,
+} from 'd3-shape';
 import type { VizNode } from '../../types.js';
 
-/**
- * 16-color palette.
- *
- * First 7 are Okabe-Ito (the colorblind-safe set, minus the black entry
- * that Okabe-Ito reserves for line plots on light backgrounds — pure
- * black disappears in dark mode against #0e1019, so it's replaced here
- * with a teal that has distinct hue from the rest of the palette).
- *
- * Positions 8–15 are extension hues spaced around the HSL wheel to
- * remain distinguishable from each other and from the Okabe-Ito core.
- * Every entry is constrained to a luminance band that reads against
- * both dark (#0e1019) and light (#fafafa) backgrounds: nothing too
- * dark (would vanish against the dark bg), nothing too pale (would
- * vanish against the light bg).
- */
-const PALETTE_16 = [
-  // Okabe-Ito 7 (excluding pure black at slot 8)
-  '#56b4e9', // sky blue
-  '#e69f00', // orange
-  '#009e73', // bluish green
-  '#cc79a7', // reddish purple
-  '#f0e442', // yellow
-  '#0072b2', // deep blue
-  '#d55e00', // vermillion
-  '#00b3b3', // teal (replaces Okabe-Ito's pure black; reads on dark + light)
-  // Extension 8 — additional hues, none too dark/light to vanish in either theme.
-  '#7b3294', // royal purple
-  '#88c0d0', // muted teal-blue (lighter than #56b4e9 to stand apart)
-  '#b2df8a', // pale green
-  '#fb9a99', // salmon
-  '#fdbf6f', // peach
-  '#1f78b4', // medium blue
-  '#33a02c', // medium green
-  '#a675c4', // soft violet (replaces #6a3d9a which leaned too dark)
-] as const;
+// ─── Hash utility ──────────────────────────────────────────────────────────
 
-/** Utility labels that should not drive node color. */
+/** FNV-1a hash → unsigned 32-bit integer. */
+function fnvHash(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+  }
+  return h >>> 0;
+}
+
+/** MurmurHash3 finalization mix — spreads clustered FNV bits for short strings. */
+function mixHash(h: number): number {
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b) >>> 0;
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35) >>> 0;
+  h ^= h >>> 16;
+  return h >>> 0;
+}
+
+// ─── Color ─────────────────────────────────────────────────────────────────
+
+/** Golden ratio conjugate — maximally separates sequential hue assignments. */
+const GOLDEN_ANGLE = 137.508;
+
+/** Precomputed label → color cache, populated by seedColorMap(). */
+const colorCache = new Map<string, string>();
+
+/**
+ * Seed the color cache from a label distribution (golden-ratio fallback).
+ */
+export function seedColorMap(dist: Record<string, number>): void {
+  // Only seed labels that don't already have a meta-node color
+  const groups = new Map<string, string[]>();
+  const ungrouped: string[] = [];
+
+  for (const label of Object.keys(dist)) {
+    if (label.startsWith('meta.')) continue; // skip meta-labels
+    if (colorCache.has(label)) continue;     // already set by meta-node
+    const dot = label.indexOf('.');
+    if (dot > 0) {
+      const prefix = label.slice(0, dot);
+      if (!groups.has(prefix)) groups.set(prefix, []);
+      groups.get(prefix)!.push(label);
+    } else {
+      ungrouped.push(label);
+    }
+  }
+
+  for (const [prefix, labels] of groups) {
+    labels.sort();
+    const baseHue = mixHash(fnvHash(prefix)) % 360;
+    for (let i = 0; i < labels.length; i++) {
+      const hue = (baseHue + i * GOLDEN_ANGLE) % 360;
+      const lightness = 44 + (i % 3) * 8;
+      colorCache.set(labels[i]!, hslToHex(hue, 62, lightness));
+    }
+  }
+
+  ungrouped.sort();
+  for (let i = 0; i < ungrouped.length; i++) {
+    const hue = (i * GOLDEN_ANGLE) % 360;
+    colorCache.set(ungrouped[i]!, hslToHex(hue, 58, 52));
+  }
+}
+
+/**
+ * Seed the color cache from meta.label nodes in the graph.
+ *
+ * Meta-nodes carry {forLabel, color, shape, size} properties.
+ * Extracts the label→color mapping so autoColor() returns the
+ * graph-defined color for every label that has a meta-node.
+ *
+ * Call once at startup after fetching /api/graph.
+ */
+export function seedFromMetaNodes(graph: { nodes: VizNode[] }): void {
+  for (const node of graph.nodes) {
+    if (node.labels.includes('meta.label') && node.properties.forLabel && node.properties.color) {
+      colorCache.set(node.properties.forLabel as string, node.properties.color as string);
+    }
+  }
+}
+
+/**
+ * Deterministic color from a label name.
+ *
+ * If seedColorMap() has been called, returns the precomputed color
+ * (golden-ratio stepping within groups). Otherwise falls back to
+ * hash-based coloring.
+ */
+export function autoColor(label: string): string {
+  const cached = colorCache.get(label);
+  if (cached) return cached;
+
+  // Fallback for labels not in the seed
+  const dot = label.indexOf('.');
+  const prefix = dot > 0 ? label.slice(0, dot) : '';
+
+  if (prefix) {
+    const subLabel = label.slice(dot + 1);
+    const baseHue = mixHash(fnvHash(prefix)) % 360;
+    const offset = (mixHash(fnvHash(subLabel)) % 90) - 45;
+    const hue = (baseHue + offset + 360) % 360;
+    const lightness = 42 + (mixHash(fnvHash(subLabel + '_l')) % 20);
+    return hslToHex(hue, 58, lightness);
+  }
+  return hslToHex(mixHash(fnvHash(label)) % 360, 58, 52);
+}
+
+// ─── Shape ─────────────────────────────────────────────────────────────────
+
+/**
+ * The shape cycle. Six visually distinct d3 symbol types, ordered from
+ * most conventional (circle) to most exotic (wye). Assigned per prefix
+ * group so every `data.*` label shares a shape, every `dom.*` another, etc.
+ */
+const SHAPE_CYCLE: SymbolType[] = [
+  symbolCircle,
+  symbolDiamond,
+  symbolSquare,
+  symbolTriangle2,
+  symbolStar,
+  symbolCross,
+  symbolWye,
+];
+
+/** Human-readable shape names, parallel to SHAPE_CYCLE. */
+const SHAPE_NAMES = [
+  'circle', 'diamond', 'square', 'triangle', 'star', 'cross', 'wye',
+];
+
+/**
+ * Deterministic d3 SymbolType for a label.
+ *
+ * Labels with the same dot-prefix share a shape; ungrouped labels each
+ * get a shape from their full name hash.
+ */
+export function shapeTypeForLabel(label: string): SymbolType {
+  const dot = label.indexOf('.');
+  const group = dot > 0 ? label.slice(0, dot) : label;
+  return SHAPE_CYCLE[fnvHash(group) % SHAPE_CYCLE.length]!;
+}
+
+/** Human-readable shape name for a label (for tooltips / screen readers). */
+export function shapeNameForLabel(label: string): string {
+  const dot = label.indexOf('.');
+  const group = dot > 0 ? label.slice(0, dot) : label;
+  return SHAPE_NAMES[fnvHash(group) % SHAPE_NAMES.length]!;
+}
+
+/** Default symbol area in px² (≈ circle r≈7). */
+const DEFAULT_SYMBOL_AREA = 150;
+
+/**
+ * SVG path `d` attribute for a label's shape at the given area.
+ *
+ * Usage:  `selection.append('path').attr('d', symbolPathForLabel(label))`
+ */
+export function symbolPathForLabel(label: string, area: number = DEFAULT_SYMBOL_AREA): string {
+  return d3Symbol().type(shapeTypeForLabel(label)).size(area)() ?? '';
+}
+
+/**
+ * Tiny inline SVG string showing a label's shape + color at a given pixel size.
+ * Used for sidebar and legend swatches.
+ */
+export function swatchSvg(label: string, sizePx: number = 12): string {
+  const color = autoColor(label);
+  const area = sizePx * sizePx * 0.6;  // area scaled to fit the viewBox
+  const path = d3Symbol().type(shapeTypeForLabel(label)).size(area)() ?? '';
+  const half = sizePx / 2;
+  return `<svg width="${sizePx}" height="${sizePx}" viewBox="${-half} ${-half} ${sizePx} ${sizePx}" style="vertical-align:middle"><path d="${path}" fill="${color}"/></svg>`;
+}
+
+// ─── Utility labels ────────────────────────────────────────────────────────
+
+/** Labels that should not drive node color (utility / meta). */
 const UTILITY_LABELS = new Set(['Bookend', 'BuildSIG']);
 
 /**
  * Pick the "primary" label of a node — the first non-utility label, or
- * the first label if all are utilities. Determines coloring + grouping.
+ * the first label if all are utilities.
  */
 export function primaryLabel(labels: string[]): string {
   if (labels.length === 0) return 'Node';
   const meaningful = labels.find((l) => !UTILITY_LABELS.has(l));
   return meaningful ?? labels[0]!;
 }
+
+// ─── ColorMap (for legend + backward compat) ───────────────────────────────
 
 export interface ColorMapEntry {
   label: string;
@@ -94,20 +233,16 @@ export interface ColorMapEntry {
 }
 
 export interface ColorMap {
-  /** Look up a color for a given label. Falls back to a default if the label is unknown to this map. */
   colorForLabel(label: string): string;
-  /** Sorted (by count desc, then alpha) legend entries. */
   entries: ColorMapEntry[];
 }
 
 /**
- * Build a color map from a set of nodes. Labels are sorted alphabetically
- * for assignment so the result is stable across reloads of the same graph.
+ * Build a color map from a set of nodes.
  *
- * Why not sort by count: count would be more "useful" visually (most
- * common gets palette[0], a strong color), but it would also mean a
- * dataset that gains/loses nodes can re-color silently. Alphabetic
- * sort is the safer stability guarantee.
+ * Every label's color comes from `autoColor(label)` — fully deterministic,
+ * no fixed map, no palette-slot assignment. The map is still useful for
+ * the legend (sorted entries with counts) and the `colorForLabel` accessor.
  */
 export function buildColorMap(nodes: VizNode[]): ColorMap {
   const counts = new Map<string, number>();
@@ -116,101 +251,45 @@ export function buildColorMap(nodes: VizNode[]): ColorMap {
     counts.set(p, (counts.get(p) ?? 0) + 1);
   }
 
-  // Stable, deterministic assignment order.
-  const labelsAlpha = [...counts.keys()].sort();
-  const assignment = new Map<string, string>();
-
-  for (let i = 0; i < labelsAlpha.length; i++) {
-    const label = labelsAlpha[i]!;
-    if (i < PALETTE_16.length) {
-      assignment.set(label, PALETTE_16[i]!);
-    } else {
-      // HSL fallback for labels beyond the palette. Distribute evenly
-      // around the wheel, offsetting so we don't clash with the early
-      // palette entries.
-      const overflow = i - PALETTE_16.length;
-      const overflowCount = labelsAlpha.length - PALETTE_16.length;
-      const hue = (overflow * 360) / Math.max(1, overflowCount);
-      assignment.set(label, hslToHex(hue, 55, 55));
-    }
-  }
-
   const entries: ColorMapEntry[] = [...counts.entries()]
     .map(([label, count]) => ({
       label,
-      color: assignment.get(label) ?? PALETTE_16[0]!,
+      color: autoColor(label),
       count,
     }))
-    // Legend display order: count descending, then alpha.
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
 
   return {
-    colorForLabel(label: string): string {
-      return assignment.get(label) ?? PALETTE_16[0]!;
-    },
+    colorForLabel: autoColor,
     entries,
   };
 }
 
 /**
- * Backward-compatible single-label color helper used by the renderers
- * before they switched to ColorMap. Stable per label name across calls
- * within a single session but uses a synthetic same-everywhere assignment
- * so the renderer's per-render ColorMap is the source of truth.
+ * Standalone label → color (no graph context needed).
  *
- * Why keep this: chord.ts and sankey.ts touch palette via this function
- * in places where threading a full ColorMap would be awkward. The
- * renderer-level ColorMap overrides at the SVG attribute level; this
- * function just supplies a "first run" color that gets refined.
- *
- * @deprecated For new code, prefer buildColorMap(nodes).colorForLabel(label).
+ * Used by chord.ts and sankey.ts where threading a full ColorMap is awkward.
  */
 export function colorForLabel(label: string): string {
-  // Deterministic single-label color: stable hash into the palette.
-  // Used only as a fallback when no ColorMap has been built (Sankey
-  // multi-chain, Chord ribbons at render time).
-  let h = 0x811c9dc5;
-  for (let i = 0; i < label.length; i++) {
-    h ^= label.charCodeAt(i);
-    h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
-  }
-  return PALETTE_16[(h >>> 0) % PALETTE_16.length] ?? PALETTE_16[0]!;
+  return autoColor(label);
 }
 
-/**
- * HSL -> #rrggbb. Simple conversion for the overflow case.
- */
+// ─── HSL → hex ─────────────────────────────────────────────────────────────
+
 function hslToHex(h: number, s: number, l: number): string {
   const sN = s / 100;
   const lN = l / 100;
   const c = (1 - Math.abs(2 * lN - 1)) * sN;
   const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
   const m = lN - c / 2;
-  let r = 0,
-    g = 0,
-    b = 0;
-  if (h < 60) {
-    r = c;
-    g = x;
-  } else if (h < 120) {
-    r = x;
-    g = c;
-  } else if (h < 180) {
-    g = c;
-    b = x;
-  } else if (h < 240) {
-    g = x;
-    b = c;
-  } else if (h < 300) {
-    r = x;
-    b = c;
-  } else {
-    r = c;
-    b = x;
-  }
+  let r = 0, g = 0, b = 0;
+  if (h < 60)       { r = c; g = x; }
+  else if (h < 120) { r = x; g = c; }
+  else if (h < 180) { g = c; b = x; }
+  else if (h < 240) { g = x; b = c; }
+  else if (h < 300) { r = x; b = c; }
+  else              { r = c; b = x; }
   const toHex = (v: number): string =>
-    Math.round((v + m) * 255)
-      .toString(16)
-      .padStart(2, '0');
+    Math.round((v + m) * 255).toString(16).padStart(2, '0');
   return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
 }

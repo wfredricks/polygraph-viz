@@ -35,7 +35,7 @@ import {
   type SimulationLinkDatum,
 } from 'd3-force';
 import type { GraphExport, VizNode, VizEdge } from '../../types.js';
-import { buildColorMap, primaryLabel } from '../ui/palette.js';
+import { buildColorMap, primaryLabel, autoColor, symbolPathForLabel, swatchSvg } from '../ui/palette.js';
 import {
   showNode,
   showEdge,
@@ -69,6 +69,41 @@ function measure(container: HTMLElement): { width: number; height: number } {
   };
 }
 
+// ── Sidebar integration helpers ─────────────────────────────────────────────
+// These are assigned after renderForce() sets up its internal state and are
+// exported so the sidebar can call them without referencing the ViewHandle
+// (which doesn't expose add/remove surface).
+//
+// They are module-level variables so the sidebar module can import them
+// directly. They are replaced every time renderForce() is called (i.e.
+// on every view switch back to force). The sidebar should obtain fresh
+// references after each render.
+
+/** Add nodes returned by /api/neighbors/:nodeId to the running simulation. */
+export let addAreaNodes: (nodeId: string) => Promise<{ added: number; nodeIds: string[] }> =
+  async () => ({ added: 0, nodeIds: [] });
+
+/** Add nodes by label from /api/nodes-by-label. */
+export let addLabelNodes: (labels: string[]) => Promise<{ added: number; nodeIds: string[] }> =
+  async () => ({ added: 0, nodeIds: [] });
+
+/** Remove a set of node IDs from the canvas. */
+export let removeNodes: (nodeIds: string[]) => void = () => {};
+
+/**
+ * connectVisible — fetch all edges between currently visible nodes via /api/subgraph
+ * and add any that are not yet drawn. Call this after loading nodes to wire up
+ * cross-type connections (the 'draw connections' action).
+ */
+export let connectVisible: () => Promise<number> = async () => 0;
+
+/**
+ * focusByLabel — highlight all visible nodes whose primary label matches.
+ * Call with the same label again (or null) to clear the highlight.
+ * Used by the sidebar label-click feature.
+ */
+export let focusByLabel: (label: string | null) => void = () => {};
+
 export function renderForce(container: HTMLElement, graph: GraphExport): ViewHandle {
   let { width, height } = measure(container);
 
@@ -94,6 +129,50 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
       return { id: e.id, type: e.type, source, target };
     })
     .filter((l): l is ForceLink => l !== null);
+
+  // Pending edges: cross-type edges where one endpoint wasn't in the canvas
+  // when the edge arrived. Resolved after each addLabelNodes/addAreaNodes call.
+  const pendingEdges: VizEdge[] = [];
+
+  function resolveEdges(): void {
+    const existingEdgeIds = new Set(links.map((l) => l.id));
+    let resolved = 0;
+    for (let i = pendingEdges.length - 1; i >= 0; i--) {
+      const ve = pendingEdges[i]!;
+      if (existingEdgeIds.has(ve.id)) { pendingEdges.splice(i, 1); continue; }
+      const source = nodeById.get(ve.fromId);
+      const target = nodeById.get(ve.toId);
+      if (!source || !target) continue;
+      const fl: ForceLink = { id: ve.id, type: ve.type, source, target };
+      links.push(fl);
+      graph.edges.push(ve);
+      outgoing.get(ve.fromId)?.add(ve.toId);
+      incoming.get(ve.toId)?.add(ve.fromId);
+      pendingEdges.splice(i, 1);
+      resolved++;
+    }
+    if (resolved > 0) {
+      linkGroup.selectAll<SVGLineElement, ForceLink>('line.edge-hit')
+        .data(links, (d) => d.id).enter()
+        .append('line').attr('class', 'edge-hit')
+        .attr('stroke', 'transparent').attr('stroke-width', 10)
+        .style('cursor', 'pointer')
+        .on('click', (_ev, d) => {
+          const original = graph.edges.find((e) => e.id === d.id);
+          if (!original) return;
+          const src = vizById.get(original.fromId);
+          const tgt = vizById.get(original.toId);
+          showEdge(original, src, tgt);
+        }).append('title').text((d) => d.type);
+      linkGroup.selectAll<SVGLineElement, ForceLink>('line.edge')
+        .data(links, (d) => d.id).enter()
+        .append('line').attr('class', 'edge').attr('stroke-width', 1.2)
+        .attr('pointer-events', 'none');
+      linkSel = linkGroup.selectAll<SVGLineElement, ForceLink>('line.edge');
+      (sim.force('link') as any).links(links); // eslint-disable-line @typescript-eslint/no-explicit-any
+      sim.alpha(0.1).restart();
+    }
+  }
 
   // Adjacency lookup tables for the focus/constellation feature.
   // Why O(E) once at render time: per-click work is then O(1) for the
@@ -141,7 +220,7 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
     .append('title')
     .text((d) => d.type);
 
-  const linkSel = linkGroup
+  let linkSel = linkGroup
     .selectAll<SVGLineElement, ForceLink>('line.edge')
     .data(links, (d) => d.id)
     .enter()
@@ -162,9 +241,8 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
       showEdge(original, src, tgt);
     });
 
-  const nodeSel = layer
-    .append('g')
-    .attr('class', 'nodes')
+  const nodesGroup = layer.append('g').attr('class', 'nodes');
+  let nodeSel = nodesGroup
     .selectAll<SVGGElement, ForceNode>('g')
     .data(nodes, (d) => d.id)
     .enter()
@@ -173,10 +251,10 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
     .style('cursor', 'pointer');
 
   nodeSel
-    .append('circle')
-    .attr('class', 'node-circle')
-    .attr('r', 7)
-    .attr('fill', (d) => colorMap.colorForLabel(d.primary))
+    .append('path')
+    .attr('class', 'node-shape')
+    .attr('d', (d) => symbolPathForLabel(d.primary))
+    .attr('fill', (d) => d.properties?.color || colorMap.colorForLabel(d.primary))
     .attr('stroke-width', 0.8);
 
   nodeSel
@@ -221,31 +299,60 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
       nodeSel.attr('transform', (d) => `translate(${d.x ?? 0},${d.y ?? 0})`);
     });
 
-  nodeSel.call(
-    drag<SVGGElement, ForceNode>()
-      .on('start', (event: D3DragEvent<SVGGElement, ForceNode, ForceNode>, d) => {
-        if (!event.active) sim.alphaTarget(0.3).restart();
-        d.fx = d.x;
-        d.fy = d.y;
-      })
-      .on('drag', (event, d) => {
-        d.fx = event.x;
-        d.fy = event.y;
-      })
-      .on('end', (event, d) => {
-        if (!event.active) sim.alphaTarget(0);
-        d.fx = null;
-        d.fy = null;
-      }),
-  );
+  const dragBehavior = drag<SVGGElement, ForceNode>()
+    .on('start', (event: D3DragEvent<SVGGElement, ForceNode, ForceNode>, d) => {
+      if (!event.active) sim.alphaTarget(0.3).restart();
+      d.fx = d.x;
+      d.fy = d.y;
+    })
+    .on('drag', (event, d) => {
+      d.fx = event.x;
+      d.fy = event.y;
+    })
+    .on('end', (event, d) => {
+      if (!event.active) sim.alphaTarget(0);
+      d.fx = null;
+      d.fy = null;
+    });
+  nodeSel.call(dragBehavior);
 
-  svg.call(
-    zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.1, 4])
-      .on('zoom', (event: D3ZoomEvent<SVGSVGElement, unknown>) => {
-        layer.attr('transform', event.transform.toString());
-      }),
-  );
+  const zoomBehavior = zoom<SVGSVGElement, unknown>()
+    .scaleExtent([0.1, 4])
+    .on('zoom', (event: D3ZoomEvent<SVGSVGElement, unknown>) => {
+      layer.attr('transform', event.transform.toString());
+    });
+  svg.call(zoomBehavior);
+
+  /** Zoom to fit a set of node IDs with padding. */
+  function zoomToFit(ids: Set<string>): void {
+    const matched = nodes.filter((d) => ids.has(d.id));
+    if (matched.length === 0) return;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const d of matched) {
+      const x = d.x ?? 0;
+      const y = d.y ?? 0;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+    const pad = 60;
+    minX -= pad; minY -= pad; maxX += pad; maxY += pad;
+    const bw = maxX - minX || 1;
+    const bh = maxY - minY || 1;
+    const s = Math.min(width / bw, height / bh, 2);
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    const tx = width / 2 - cx * s;
+    const ty = height / 2 - cy * s;
+    // Use d3.zoomIdentity from the already-imported zoom module
+    import('d3-zoom').then(({ zoomIdentity }) => {
+      svg.transition().duration(500).call(
+        zoomBehavior.transform as any,
+        zoomIdentity.translate(tx, ty).scale(s),
+      );
+    });
+  }
 
   // ── Focus / constellation state ─────────────────────────────
   // Click a node → dim everything except the connected constellation
@@ -290,7 +397,7 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
     if (!focused) {
       nodeSel.style('opacity', 1);
       nodeSel
-        .select<SVGCircleElement>('circle')
+        .select<SVGPathElement>('.node-shape')
         .attr('stroke-width', 0.8)
         .attr('stroke', null);
       linkSel.style('opacity', 0.9);
@@ -323,7 +430,7 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
     const anchorId = focused.id; // empty string when byLabel
     nodeSel
       .style('opacity', (d) => (focusSet.has(d.id) ? 1 : 0.12))
-      .select<SVGCircleElement>('circle')
+      .select<SVGPathElement>('.node-shape')
       .attr('stroke-width', (d) =>
         d.id === anchorId ? 3 : focusSet.has(d.id) ? 1.6 : 0.8,
       )
@@ -357,7 +464,7 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
     row.title = `${entry.count} ${entry.label} node${entry.count === 1 ? '' : 's'} — click to focus`;
     const swatch = document.createElement('span');
     swatch.className = 'legend-swatch';
-    swatch.style.backgroundColor = entry.color;
+    swatch.innerHTML = swatchSvg(entry.label, 12);
     const label = document.createElement('span');
     label.className = 'legend-label';
     label.textContent = entry.label;
@@ -381,6 +488,524 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
   }
   container.appendChild(legend);
 
+  // ── Context menu ────────────────────────────────────────────
+  // Right-click on a node opens a small floating overlay with secondary
+  // actions. Uses position:fixed + clientX/Y so it never gets clipped.
+  const ctxMenu = document.createElement('div');
+  ctxMenu.className = 'node-ctx-menu';
+  ctxMenu.style.display = 'none';
+  document.body.appendChild(ctxMenu);
+
+  let ctxMenuTarget: ForceNode | null = null;
+
+  function showToast(msg: string, durationMs = 2200): void {
+    const t = document.createElement('div');
+    t.textContent = msg;
+    Object.assign(t.style, {
+      position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)',
+      background: 'rgba(30,30,36,0.92)', color: '#e0e0e0', padding: '8px 18px',
+      borderRadius: '8px', fontSize: '13px', zIndex: '9999',
+      backdropFilter: 'blur(6px)', pointerEvents: 'none',
+      boxShadow: '0 2px 12px rgba(0,0,0,0.4)', whiteSpace: 'nowrap',
+    });
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), durationMs);
+  }
+
+  function hideCtxMenu(): void {
+    ctxMenu.style.display = 'none';
+    ctxMenuTarget = null;
+  }
+
+  function showCtxMenu(event: MouseEvent, d: ForceNode): void {
+    ctxMenuTarget = d;
+    ctxMenu.style.left = `${event.clientX + 4}px`;
+    ctxMenu.style.top = `${event.clientY + 4}px`;
+    ctxMenu.style.display = 'block';
+  }
+
+  // ── Expand neighbors ─────────────────────────────────────────
+  // Fetches 1-hop neighbors from /api/neighbors/:id and merges any new
+  // nodes/edges into the running simulation without a full re-render.
+  async function expandNeighbors(nodeId: string): Promise<void> {
+    try {
+      const res = await fetch(`/api/neighbors/${encodeURIComponent(nodeId)}`);
+      if (!res.ok) return;
+      const data = (await res.json()) as { nodes: VizNode[]; edges: VizEdge[] };
+
+      const newVizNodes = data.nodes.filter((n) => !nodeById.has(n.id) && !n.properties?.['suppressed']);
+      const existingEdgeIds = new Set(links.map((l) => l.id));
+      const suppressedNbrIds = new Set(data.nodes.filter(n => n.properties?.['suppressed']).map(n => n.id));
+      const newVizEdges = data.edges.filter((e) => !existingEdgeIds.has(e.id) && !suppressedNbrIds.has(e.fromId) && !suppressedNbrIds.has(e.toId));
+
+      if (newVizNodes.length === 0 && newVizEdges.length === 0) {
+        showToast('All neighbors already visible');
+        return;
+      }
+
+      // Seed positions near the anchor node so new nodes don't pile at origin.
+      const anchor = nodeById.get(nodeId);
+      const anchorX = anchor?.x ?? width / 2;
+      const anchorY = anchor?.y ?? height / 2;
+
+      for (const vn of newVizNodes) {
+        const fn: ForceNode = {
+          id: vn.id,
+          labels: vn.labels,
+          properties: vn.properties,
+          primary: primaryLabel(vn.labels),
+          x: anchorX + (Math.random() - 0.5) * 80,
+          y: anchorY + (Math.random() - 0.5) * 80,
+        };
+        nodes.push(fn);
+        nodeById.set(fn.id, fn);
+        vizById.set(fn.id, vn);
+        graph.nodes.push(vn);
+        outgoing.set(fn.id, new Set());
+        incoming.set(fn.id, new Set());
+      }
+
+      for (const ve of newVizEdges) {
+        const source = nodeById.get(ve.fromId);
+        const target = nodeById.get(ve.toId);
+        if (!source || !target) continue;
+        const fl: ForceLink = { id: ve.id, type: ve.type, source, target };
+        links.push(fl);
+        graph.edges.push(ve);
+        outgoing.get(ve.fromId)?.add(ve.toId);
+        incoming.get(ve.toId)?.add(ve.fromId);
+      }
+
+      // Incrementally enter new nodes into the SVG.
+      if (newVizNodes.length > 0) {
+        const entered = nodesGroup
+          .selectAll<SVGGElement, ForceNode>('g')
+          .data(nodes, (d) => d.id)
+          .enter()
+          .append('g')
+          .attr('class', 'node')
+          .style('cursor', 'pointer');
+
+        entered
+          .append('path')
+          .attr('class', 'node-shape')
+          .attr('d', (d) => symbolPathForLabel(d.primary))
+          .attr('fill', (d) => d.properties?.color || colorMap.colorForLabel(d.primary))
+          .attr('stroke-width', 0.8);
+
+        entered
+          .append('text')
+          .attr('class', 'node-label')
+          .text((d) => {
+            const v = vizById.get(d.id);
+            return v ? pickDisplayName(v) : d.id;
+          })
+          .attr('x', 11)
+          .attr('y', 4)
+          .attr('font-size', 10)
+          .attr('pointer-events', 'none');
+
+        entered.append('title').text((d) => `${d.id}\n${d.labels.join(' · ')}`);
+
+        entered.on('click', (event: MouseEvent, d) => {
+          const v = vizById.get(d.id);
+          if (v) showNode(v);
+          const transitive = event.shiftKey;
+          if (focused && focused.id === d.id && focused.transitive === transitive) {
+            focused = null;
+          } else {
+            focused = { id: d.id, transitive };
+          }
+          applyFocus();
+          event.stopPropagation();
+        });
+
+        entered.on('contextmenu', (event: MouseEvent, d) => {
+          event.preventDefault();
+          showCtxMenu(event, d);
+        });
+
+        entered.call(dragBehavior);
+
+        // Widen nodeSel so tick, applyFocus, and setSearch reach new nodes.
+        nodeSel = nodesGroup.selectAll<SVGGElement, ForceNode>('g');
+      }
+
+      // Incrementally enter new links into the SVG.
+      if (newVizEdges.length > 0) {
+        linkGroup
+          .selectAll<SVGLineElement, ForceLink>('line.edge-hit')
+          .data(links, (d) => d.id)
+          .enter()
+          .append('line')
+          .attr('class', 'edge-hit')
+          .attr('stroke', 'transparent')
+          .attr('stroke-width', 10)
+          .style('cursor', 'pointer')
+          .on('click', (_ev, d) => {
+            const original = graph.edges.find((e) => e.id === d.id);
+            if (!original) return;
+            const src = vizById.get(original.fromId);
+            const tgt = vizById.get(original.toId);
+            showEdge(original, src, tgt);
+          })
+          .append('title')
+          .text((d) => d.type);
+
+        linkGroup
+          .selectAll<SVGLineElement, ForceLink>('line.edge')
+          .data(links, (d) => d.id)
+          .enter()
+          .append('line')
+          .attr('class', 'edge')
+          .attr('stroke-width', 1.2)
+          .attr('pointer-events', 'none');
+
+        // Widen linkSel so tick handler positions new edges.
+        linkSel = linkGroup.selectAll<SVGLineElement, ForceLink>('line.edge');
+      }
+
+      // Restart simulation with the expanded node/link arrays.
+      sim.nodes(nodes);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (sim.force('link') as any).links(links);
+      sim.alpha(0.3).restart();
+
+      // Resolve any pending cross-type edges now that new nodes are present.
+      resolveEdges();
+    } catch (err) {
+      console.error('expandNeighbors failed:', err);
+    }
+  }
+
+  // ── Sidebar integration: module-level function references ──────────────
+  // Assigned here so the sidebar can call them after renderForce() runs.
+  // Re-assigned on every renderForce() call so stale closures never escape.
+
+  connectVisible = async (): Promise<number> => {
+    const visibleIds = [...nodeById.keys()];
+    if (visibleIds.length < 2) return 0;
+    try {
+      const res = await fetch('/api/subgraph', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nodeIds: visibleIds }),
+      });
+      if (!res.ok) return 0;
+      const data = (await res.json()) as { nodes: VizNode[]; edges: VizEdge[] };
+      const existingEdgeIds = new Set(links.map((l) => l.id));
+      const newEdges = data.edges.filter((e) => !existingEdgeIds.has(e.id));
+      let added = 0;
+      for (const ve of newEdges) {
+        const source = nodeById.get(ve.fromId);
+        const target = nodeById.get(ve.toId);
+        if (!source || !target) continue;
+        const fl: ForceLink = { id: ve.id, type: ve.type, source, target };
+        links.push(fl);
+        graph.edges.push(ve);
+        outgoing.get(ve.fromId)?.add(ve.toId);
+        incoming.get(ve.toId)?.add(ve.fromId);
+        added++;
+      }
+      if (added > 0) {
+        linkGroup.selectAll<SVGLineElement, ForceLink>('line.edge-hit')
+          .data(links, (d) => d.id).enter()
+          .append('line').attr('class', 'edge-hit')
+          .attr('stroke', 'transparent').attr('stroke-width', 10)
+          .style('cursor', 'pointer')
+          .on('click', (_ev, d) => {
+            const original = graph.edges.find((e) => e.id === d.id);
+            if (!original) return;
+            const src = vizById.get(original.fromId);
+            const tgt = vizById.get(original.toId);
+            showEdge(original, src, tgt);
+          }).append('title').text((d) => d.type);
+        linkGroup.selectAll<SVGLineElement, ForceLink>('line.edge')
+          .data(links, (d) => d.id).enter()
+          .append('line').attr('class', 'edge').attr('stroke-width', 1.2)
+          .attr('stroke', (d) => colorMap.colorForLabel(d.type))
+          .attr('stroke-opacity', 0.6);
+        (sim.force('link') as any).links(links);
+        sim.alpha(0.15).restart();
+      }
+      return added;
+    } catch { return 0; }
+  };
+
+  addAreaNodes = async (nodeId: string): Promise<{ added: number; nodeIds: string[] }> => {
+    const before = nodes.length;
+    await expandNeighbors(nodeId);
+    const after = nodes.length;
+    const added = after - before;
+    // Return the IDs of the newly added nodes (the tail of the array)
+    const newIds = nodes.slice(before).map((n) => n.id);
+    return { added, nodeIds: newIds };
+  };
+
+  addLabelNodes = async (labels: string[]): Promise<{ added: number; nodeIds: string[] }> => {
+    try {
+      const q = labels.map(encodeURIComponent).join(',');
+      // Request up to 2000 nodes — enough for any single label in STORES.
+      // The server default cap is 500 which truncates code.file (891), features (1895), etc.
+      const res = await fetch(`/api/nodes-by-label?labels=${q}&limit=2000`);
+      if (!res.ok) return { added: 0, nodeIds: [] };
+      const data = (await res.json()) as { nodes: VizNode[]; edges: VizEdge[] };
+
+      // Exclude suppressed nodes (Phase 1+ consolidation — marked suppressed:true)
+      const newVizNodes = data.nodes.filter((n) => !nodeById.has(n.id) && !n.properties?.['suppressed']);
+      const existingEdgeIds = new Set(links.map((l) => l.id));
+      // Also exclude edges whose endpoints are suppressed
+      const suppressedIds = new Set(data.nodes.filter(n => n.properties?.['suppressed']).map(n => n.id));
+      const newVizEdges = data.edges.filter((e) => !existingEdgeIds.has(e.id) && !suppressedIds.has(e.fromId) && !suppressedIds.has(e.toId));
+
+      const newIds: string[] = [];
+
+      if (newVizNodes.length === 0 && newVizEdges.length === 0) {
+        return { added: 0, nodeIds: [] };
+      }
+
+      for (const vn of newVizNodes) {
+        const fn: ForceNode = {
+          id: vn.id,
+          labels: vn.labels,
+          properties: vn.properties,
+          primary: primaryLabel(vn.labels),
+          x: width / 2 + (Math.random() - 0.5) * 200,
+          y: height / 2 + (Math.random() - 0.5) * 200,
+        };
+        nodes.push(fn);
+        nodeById.set(fn.id, fn);
+        vizById.set(fn.id, vn);
+        graph.nodes.push(vn);
+        outgoing.set(fn.id, new Set());
+        incoming.set(fn.id, new Set());
+        newIds.push(fn.id);
+      }
+
+      for (const ve of newVizEdges) {
+        const source = nodeById.get(ve.fromId);
+        const target = nodeById.get(ve.toId);
+        if (!source || !target) {
+          // Park for later resolution when the other endpoint arrives.
+          pendingEdges.push(ve);
+          continue;
+        }
+        const fl: ForceLink = { id: ve.id, type: ve.type, source, target };
+        links.push(fl);
+        graph.edges.push(ve);
+        outgoing.get(ve.fromId)?.add(ve.toId);
+        incoming.get(ve.toId)?.add(ve.fromId);
+      }
+
+      if (newVizNodes.length > 0) {
+        const entered = nodesGroup
+          .selectAll<SVGGElement, ForceNode>('g')
+          .data(nodes, (d) => d.id)
+          .enter()
+          .append('g')
+          .attr('class', 'node')
+          .style('cursor', 'pointer');
+
+        entered
+          .append('path')
+          .attr('class', 'node-shape')
+          .attr('d', (d) => symbolPathForLabel(d.primary))
+          .attr('fill', (d) => d.properties?.color || colorMap.colorForLabel(d.primary))
+          .attr('stroke-width', 0.8);
+
+        entered
+          .append('text')
+          .attr('class', 'node-label')
+          .text((d) => {
+            const v = vizById.get(d.id);
+            return v ? pickDisplayName(v) : d.id;
+          })
+          .attr('x', 11)
+          .attr('y', 4)
+          .attr('font-size', 10)
+          .attr('pointer-events', 'none');
+
+        entered.append('title').text((d) => `${d.id}\n${d.labels.join(' \u00b7 ')}`);
+
+        entered.on('click', (event: MouseEvent, d) => {
+          const v = vizById.get(d.id);
+          if (v) showNode(v);
+          const transitive = event.shiftKey;
+          if (focused && focused.id === d.id && focused.transitive === transitive) {
+            focused = null;
+          } else {
+            focused = { id: d.id, transitive };
+          }
+          applyFocus();
+          event.stopPropagation();
+        });
+
+        entered.on('contextmenu', (event: MouseEvent, d) => {
+          event.preventDefault();
+          showCtxMenu(event, d);
+        });
+
+        entered.call(dragBehavior);
+        nodeSel = nodesGroup.selectAll<SVGGElement, ForceNode>('g');
+      }
+
+      if (newVizEdges.length > 0) {
+        linkGroup
+          .selectAll<SVGLineElement, ForceLink>('line.edge-hit')
+          .data(links, (d) => d.id)
+          .enter()
+          .append('line')
+          .attr('class', 'edge-hit')
+          .attr('stroke', 'transparent')
+          .attr('stroke-width', 10)
+          .style('cursor', 'pointer')
+          .on('click', (_ev, d) => {
+            const original = graph.edges.find((e) => e.id === d.id);
+            if (!original) return;
+            const src = vizById.get(original.fromId);
+            const tgt = vizById.get(original.toId);
+            showEdge(original, src, tgt);
+          })
+          .append('title')
+          .text((d) => d.type);
+
+        linkGroup
+          .selectAll<SVGLineElement, ForceLink>('line.edge')
+          .data(links, (d) => d.id)
+          .enter()
+          .append('line')
+          .attr('class', 'edge')
+          .attr('stroke-width', 1.2)
+          .attr('pointer-events', 'none');
+
+        linkSel = linkGroup.selectAll<SVGLineElement, ForceLink>('line.edge');
+      }
+
+      sim.nodes(nodes);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (sim.force('link') as any).links(links);
+      sim.alpha(0.3).restart();
+
+      // Resolve any pending edges that now have both endpoints.
+      resolveEdges();
+
+      // Auto-connect: find edges between all currently visible nodes.
+      // This is the 'draw connections' pass — wires up cross-type edges
+      // regardless of the order node types were loaded.
+      void connectVisible();
+
+      return { added: newIds.length, nodeIds: newIds };
+    } catch (err) {
+      console.error('addLabelNodes failed:', err);
+      return { added: 0, nodeIds: [] };
+    }
+  };
+
+  removeNodes = (nodeIds: string[]): void => {
+    const removeSet = new Set(nodeIds);
+    // Remove from data arrays
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      if (removeSet.has(nodes[i]!.id)) nodes.splice(i, 1);
+    }
+    for (let i = links.length - 1; i >= 0; i--) {
+      const s = (links[i]!.source as ForceNode).id;
+      const t = (links[i]!.target as ForceNode).id;
+      if (removeSet.has(s) || removeSet.has(t)) links.splice(i, 1);
+    }
+    for (let i = graph.nodes.length - 1; i >= 0; i--) {
+      if (removeSet.has(graph.nodes[i]!.id)) graph.nodes.splice(i, 1);
+    }
+    for (let i = graph.edges.length - 1; i >= 0; i--) {
+      if (removeSet.has(graph.edges[i]!.fromId) || removeSet.has(graph.edges[i]!.toId)) {
+        graph.edges.splice(i, 1);
+      }
+    }
+    for (const id of nodeIds) {
+      nodeById.delete(id);
+      vizById.delete(id);
+      outgoing.delete(id);
+      incoming.delete(id);
+    }
+    // Remove from SVG
+    nodeSel = nodesGroup.selectAll<SVGGElement, ForceNode>('g')
+      .data(nodes, (d) => d.id);
+    nodeSel.exit().remove();
+    nodeSel = nodesGroup.selectAll<SVGGElement, ForceNode>('g');
+
+    linkSel = linkGroup.selectAll<SVGLineElement, ForceLink>('line.edge')
+      .data(links, (d) => d.id);
+    linkSel.exit().remove();
+    linkGroup.selectAll<SVGLineElement, ForceLink>('line.edge-hit')
+      .data(links, (d) => d.id)
+      .exit().remove();
+    linkSel = linkGroup.selectAll<SVGLineElement, ForceLink>('line.edge');
+
+    // Restart simulation
+    sim.nodes(nodes);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (sim.force('link') as any).links(links);
+    sim.alpha(0.2).restart();
+  };
+
+  // Sidebar label-click: highlight all visible nodes of a given label.
+  focusByLabel = (label: string | null): void => {
+    if (!label || (focused && focused.byLabel === label)) {
+      focused = null;
+    } else {
+      focused = { id: '', byLabel: label, transitive: false };
+    }
+    applyFocus();
+  };
+
+  // Build context menu buttons.
+  const ctxItems: { label: string; action: () => void }[] = [
+    {
+      label: '⊕ Expand neighbors',
+      action: () => {
+        if (!ctxMenuTarget) return;
+        void expandNeighbors(ctxMenuTarget.id);
+        hideCtxMenu();
+      },
+    },
+    {
+      label: '◎ Focus',
+      action: () => {
+        if (!ctxMenuTarget) return;
+        const viz = vizById.get(ctxMenuTarget.id);
+        if (viz) showNode(viz);
+        focused = { id: ctxMenuTarget.id, transitive: false };
+        applyFocus();
+        hideCtxMenu();
+      },
+    },
+    {
+      label: '⎘ Copy ID',
+      action: () => {
+        if (!ctxMenuTarget) return;
+        navigator.clipboard.writeText(ctxMenuTarget.id).catch(() => {
+          /* clipboard unavailable — silent */
+        });
+        hideCtxMenu();
+      },
+    },
+  ];
+  for (const item of ctxItems) {
+    const btn = document.createElement('button');
+    btn.className = 'ctx-menu-item';
+    btn.type = 'button';
+    btn.textContent = item.label;
+    btn.addEventListener('click', item.action);
+    ctxMenu.appendChild(btn);
+  }
+
+  // Dismiss context menu when clicking anywhere outside it.
+  const ctxOutsideHandler = (e: MouseEvent): void => {
+    if (ctxMenu.style.display !== 'none' && !ctxMenu.contains(e.target as Node)) {
+      hideCtxMenu();
+    }
+  };
+  document.addEventListener('mousedown', ctxOutsideHandler);
+
   nodeSel.on('click', (event: MouseEvent, d) => {
     const viz = vizById.get(d.id);
     if (viz) showNode(viz);
@@ -394,6 +1019,11 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
     event.stopPropagation();
   });
 
+  nodeSel.on('contextmenu', (event: MouseEvent, d) => {
+    event.preventDefault();
+    showCtxMenu(event, d);
+  });
+
   // Click on empty SVG background clears focus.
   svg.on('click', () => {
     if (focused) {
@@ -404,9 +1034,13 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
 
   // ESC clears focus.
   const escHandler = (e: KeyboardEvent): void => {
-    if (e.key === 'Escape' && focused) {
-      focused = null;
-      applyFocus();
+    if (e.key === 'Escape') {
+      if (ctxMenu.style.display !== 'none') {
+        hideCtxMenu();
+      } else if (focused) {
+        focused = null;
+        applyFocus();
+      }
     }
   };
   document.addEventListener('keydown', escHandler);
@@ -436,14 +1070,16 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
         focused = null;
       }
       if (!query) {
-        nodeSel.style('opacity', 1);
+        // Restore display for all nodes (clear search-imposed hiding)
+        nodeSel.style('display', null).style('opacity', 1);
         nodeSel
-          .select<SVGCircleElement>('circle')
+          .select<SVGPathElement>('.node-shape')
           .attr('stroke-width', 0.8)
           .attr('stroke', null);
-        linkSel.style('opacity', 0.9);
+        linkSel.style('display', null).style('opacity', 0.9);
         linkGroup
           .selectAll<SVGLineElement, ForceLink>('line.edge-hit')
+          .style('display', null)
           .style('pointer-events', 'auto');
         return;
       }
@@ -451,9 +1087,15 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
       for (const n of graph.nodes) {
         if (nodeMatches(n, query)) matchedIds.add(n.id);
       }
+      // Search overrides any active filter: un-hide matched nodes
+      // that were hidden by setFilter so search works across the full
+      // graph regardless of active slice.
+      nodeSel.style('display', (d) =>
+        matchedIds.has(d.id) ? null : 'none',
+      );
       nodeSel
         .style('opacity', (d) => (matchedIds.has(d.id) ? 1 : 0.15))
-        .select<SVGCircleElement>('circle')
+        .select<SVGPathElement>('.node-shape')
         .attr('stroke-width', (d) => (matchedIds.has(d.id) ? 2.2 : 0.8))
         .attr('stroke', (d) =>
           matchedIds.has(d.id)
@@ -461,11 +1103,17 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
               '#7aa2ff'
             : null,
         );
-      linkSel.style('opacity', (d) => {
-        const s = (d.source as ForceNode).id;
-        const t = (d.target as ForceNode).id;
-        return matchedIds.has(s) && matchedIds.has(t) ? 0.9 : 0.05;
-      });
+      linkSel
+        .style('display', (d) => {
+          const s = (d.source as ForceNode).id;
+          const t = (d.target as ForceNode).id;
+          return matchedIds.has(s) && matchedIds.has(t) ? null : 'none';
+        })
+        .style('opacity', (d) => {
+          const s = (d.source as ForceNode).id;
+          const t = (d.target as ForceNode).id;
+          return matchedIds.has(s) && matchedIds.has(t) ? 0.9 : 0.05;
+        });
       // Disable clicks on filtered-out edges so users don't open
       // inspectors for things they can't even see.
       linkGroup
@@ -475,6 +1123,8 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
           const t = (d.target as ForceNode).id;
           return matchedIds.has(s) && matchedIds.has(t) ? 'auto' : 'none';
         });
+      // Zoom to fit matched nodes so they're visible
+      zoomToFit(matchedIds);
     },
     focus(
       nodeId: string | string[] | null,
@@ -522,12 +1172,21 @@ export function renderForce(container: HTMLElement, graph: GraphExport): ViewHan
           const t = (d.target as ForceNode).id;
           return keep.has(s) && keep.has(t) ? null : 'none';
         });
+      // Zoom to fit the filtered subset
+      zoomToFit(keep);
+    },
+    refit(): void {
+      // Simple zoom-to-fit of all nodes in the current graph
+      const allIds = new Set(nodes.map(d => d.id));
+      zoomToFit(allIds);
     },
     destroy(): void {
       ro.disconnect();
       sim.stop();
       svg.remove();
       legend.remove();
+      ctxMenu.remove();
+      document.removeEventListener('mousedown', ctxOutsideHandler);
       clearInspector();
       document.removeEventListener('keydown', escHandler);
     },

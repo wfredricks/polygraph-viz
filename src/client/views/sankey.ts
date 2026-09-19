@@ -44,6 +44,7 @@ interface SNodeExtra {
 interface SLinkExtra {
   edgeId: string;
   edgeType: string;
+  leftLayer: string; // chain-order left side, for consistent coloring
 }
 
 type SNode = SankeyNode<SNodeExtra, SLinkExtra>;
@@ -246,14 +247,34 @@ function renderSingleSankey(
     if (sIdx === undefined || tIdx === undefined) continue;
     const sLayer = primary.get(e.fromId)!;
     const tLayer = primary.get(e.toId)!;
-    if (chainIndex.get(sLayer)! >= chainIndex.get(tLayer)!) continue;
-    sLinks.push({
-      source: sIdx,
-      target: tIdx,
-      value: 1,
-      edgeId: e.id,
-      edgeType: e.type,
-    });
+    const sChainPos = chainIndex.get(sLayer)!;
+    const tChainPos = chainIndex.get(tLayer)!;
+    if (sChainPos === tChainPos) continue; // same layer, skip
+    // Normalize direction: always flow left-to-right per chain order.
+    // If the edge goes "against" the chain direction, swap source/target
+    // so the Sankey renders it as a forward flow.
+    // Determine which node is "left" in chain order (for coloring)
+    const leftLayer = sChainPos < tChainPos ? sLayer : tLayer;
+    if (sChainPos < tChainPos) {
+      sLinks.push({
+        source: sIdx,
+        target: tIdx,
+        value: 1,
+        edgeId: e.id,
+        edgeType: e.type,
+        leftLayer,
+      });
+    } else {
+      // Reverse: edge goes right-to-left in chain order, flip it
+      sLinks.push({
+        source: tIdx,
+        target: sIdx,
+        value: 1,
+        edgeId: e.id,
+        edgeType: e.type,
+        leftLayer,
+      });
+    }
   }
 
   if (sLinks.length === 0) {
@@ -311,11 +332,15 @@ function renderSingleSankey(
     .attr('class', 'sankey-link')
     .attr('d', sankeyLinkHorizontal())
     .attr('stroke', (d) => {
+      // Color by the left-side node type in chain order,
+      // not by d3-sankey's source (which may be swapped for reversed edges)
+      const ll = (d as unknown as { leftLayer?: string }).leftLayer;
+      if (ll) return colorMap.colorForLabel(ll);
       const src = d.source as SNode;
       return colorMap.colorForLabel(src.layer);
     })
-    .attr('stroke-opacity', 0.35)
-    .attr('stroke-width', (d) => Math.max(1, d.width ?? 1))
+    .attr('stroke-opacity', 0.55)
+    .attr('stroke-width', (d) => Math.max(2, d.width ?? 1))
     .attr('pointer-events', 'none');
   linkSel.append('title').text((d) => {
     const src = d.source as SNode;
@@ -431,6 +456,52 @@ function renderSingleSankey(
 // localStorage; the URL param is the persistent form).
 let showAllChains = false;
 
+// ── Interactive selector state ────────────────────────────────
+// Module-level so selections persist across re-renders within session.
+let selectedSource: string | null = null;
+let selectedTarget: string | null = null;
+
+/**
+ * BFS from source label to target label through the label-transition graph.
+ * Returns the shortest path of label types, or [] if no path exists.
+ */
+function findChainBetween(t: Transitions, source: string, target: string, allLabels: Set<string>): string[] {
+  // Build an UNDIRECTED adjacency from the directed transitions.
+  // If edges exist A→B in any direction, both A→B and B→A are valid
+  // paths for the chain finder. The Sankey renderer will handle
+  // edge direction separately by looking at both fromId/toId.
+  const undirected = new Map<string, Set<string>>();
+  const addEdge = (a: string, b: string) => {
+    if (!undirected.has(a)) undirected.set(a, new Set());
+    if (!undirected.has(b)) undirected.set(b, new Set());
+    undirected.get(a)!.add(b);
+    undirected.get(b)!.add(a);
+  };
+  for (const [from, row] of t.transitions) {
+    for (const [to] of row) {
+      addEdge(from, to);
+    }
+  }
+
+  // BFS on the undirected graph
+  const visited = new Set<string>([source]);
+  const queue: string[][] = [[source]];
+  while (queue.length > 0) {
+    const path = queue.shift()!;
+    const current = path[path.length - 1];
+    if (current === target) return path;
+    const neighbors = undirected.get(current);
+    if (!neighbors) continue;
+    for (const next of neighbors) {
+      if (!visited.has(next) && allLabels.has(next)) {
+        visited.add(next);
+        queue.push([...path, next]);
+      }
+    }
+  }
+  return []; // no path
+}
+
 export function renderSankey(container: HTMLElement, graph: GraphExport): ViewHandle {
   // Initial state seeds from URL once per page load.
   if (readShowAllOverride()) showAllChains = true;
@@ -445,23 +516,123 @@ export function renderSankey(container: HTMLElement, graph: GraphExport): ViewHa
   // colour the same labels the same way as the Force view's legend.
   const colorMap = buildColorMap(graph.nodes);
 
-  // Resolve chains: URL override forces single mode; otherwise auto-detect.
+  // Forward-declare handle so event handlers in the selector bar can reference it.
+  let handle: ViewHandle = NULL_HANDLE;
+
+  // Collect all unique label types for the selector dropdowns.
+  const allLabelSet = new Set<string>(primary.values());
+  const sortedLabels = [...allLabelSet].sort((a, b) => a.localeCompare(b));
+
+  // Resolve chains: selector override > URL override > auto-detect.
   const override = readChainOverride();
   let chains: string[][];
-  if (override) {
+  let selectorChainFailed = false;
+
+  if (selectedSource && selectedTarget) {
+    // Interactive selector takes priority over everything.
+    const t = buildTransitions(graph, primary);
+    const selectorChain = findChainBetween(t, selectedSource, selectedTarget, allLabelSet);
+    if (selectorChain.length >= 2) {
+      chains = [selectorChain];
+    } else {
+      chains = [];
+      selectorChainFailed = true;
+    }
+  } else if (override) {
     chains = [override];
   } else {
     const allChains = autoDetectChains(graph, primary);
     chains = showAllChains ? allChains : allChains.slice(0, 1);
   }
 
+  // ── Selector bar ────────────────────────────────────────────
+  const selectorBar = document.createElement('div');
+  selectorBar.className = 'sankey-selector-bar';
+  selectorBar.style.cssText = 'display:flex;align-items:center;gap:12px;padding:6px 12px;background:#f8f9fa;border-bottom:1px solid #dee2e6;font-size:13px;';
+
+  const fromLabel = document.createElement('label');
+  fromLabel.textContent = 'From:';
+  fromLabel.style.fontWeight = '600';
+  const fromSelect = document.createElement('select');
+  fromSelect.style.cssText = 'padding:3px 8px;border:1px solid #ced4da;border-radius:4px;';
+  fromSelect.innerHTML = '<option value="">(any)</option>' +
+    sortedLabels.map(l => `<option value="${l}"${l === selectedSource ? ' selected' : ''}>${l}</option>`).join('');
+
+  const arrow = document.createElement('span');
+  arrow.textContent = '→';
+  arrow.style.cssText = 'font-size:16px;color:#666;';
+
+  const toLabel = document.createElement('label');
+  toLabel.textContent = 'To:';
+  toLabel.style.fontWeight = '600';
+  const toSelect = document.createElement('select');
+  toSelect.style.cssText = 'padding:3px 8px;border:1px solid #ced4da;border-radius:4px;';
+  toSelect.innerHTML = '<option value="">(any)</option>' +
+    sortedLabels.map(l => `<option value="${l}"${l === selectedTarget ? ' selected' : ''}>${l}</option>`).join('');
+
+  const resetBtn = document.createElement('button');
+  resetBtn.textContent = 'Reset';
+  resetBtn.style.cssText = 'padding:2px 10px;border:1px solid #ced4da;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;color:#666;';
+  resetBtn.style.display = (selectedSource || selectedTarget) ? 'inline-block' : 'none';
+
+  const rerender = () => {
+    handle.destroy();
+    select(container).selectAll('.sankey-selector-bar, .sankey-wrapper').remove();
+    container.innerHTML = '';
+    const next = renderSankey(container, graph);
+    Object.assign(handle, next);
+  };
+
+  fromSelect.addEventListener('change', () => {
+    selectedSource = fromSelect.value || null;
+    rerender();
+  });
+  toSelect.addEventListener('change', () => {
+    selectedTarget = toSelect.value || null;
+    rerender();
+  });
+  resetBtn.addEventListener('click', () => {
+    selectedSource = null;
+    selectedTarget = null;
+    rerender();
+  });
+
+  selectorBar.appendChild(fromLabel);
+  selectorBar.appendChild(fromSelect);
+  selectorBar.appendChild(arrow);
+  selectorBar.appendChild(toLabel);
+  selectorBar.appendChild(toSelect);
+  selectorBar.appendChild(resetBtn);
+  container.appendChild(selectorBar);
+
+  // Handle cases where no valid chain exists.
+  if (selectorChainFailed) {
+    container.innerHTML = '';
+    container.appendChild(selectorBar);
+    const msg = document.createElement('p');
+    msg.className = 'placeholder';
+    msg.innerHTML = `No path found from <strong>${selectedSource}</strong> to <strong>${selectedTarget}</strong>. Try swapping direction or choosing different label types.`;
+    container.appendChild(msg);
+    handle = {
+      ...NULL_HANDLE,
+      destroy() { select(container).selectAll('.sankey-selector-bar, .sankey-wrapper, .placeholder').remove(); clearInspector(); },
+    };
+    return handle;
+  }
+
   if (chains.length === 0 || chains[0]!.length < 2) {
-    container.innerHTML = `
-      <p class="placeholder">
-        Sankey needs a chain of at least 2 label classes. Could not auto-detect one.
-        Try a URL like <code>?sankey=Requirement,Feature,UseCase</code>.
-      </p>`;
-    return NULL_HANDLE;
+    container.innerHTML = '';
+    container.appendChild(selectorBar);
+    const msg = document.createElement('p');
+    msg.className = 'placeholder';
+    msg.innerHTML = `Sankey needs a chain of at least 2 label classes. Could not auto-detect one.
+        Try a URL like <code>?sankey=Requirement,Feature,UseCase</code>, or use the selectors above.`;
+    container.appendChild(msg);
+    handle = {
+      ...NULL_HANDLE,
+      destroy() { select(container).selectAll('.sankey-selector-bar, .sankey-wrapper, .placeholder').remove(); clearInspector(); },
+    };
+    return handle;
   }
 
   // ── Layout wrapper ──────────────────────────────────────────
@@ -542,7 +713,7 @@ export function renderSankey(container: HTMLElement, graph: GraphExport): ViewHa
     allSelections.push(sel);
   }
 
-  const handle: ViewHandle = {
+  handle = {
     setSearch(query: string): void {
       const matched = new Set<string>();
       if (query) {
@@ -592,7 +763,7 @@ export function renderSankey(container: HTMLElement, graph: GraphExport): ViewHa
       void _opts;
     },
     destroy(): void {
-      select(container).select('.sankey-wrapper').remove();
+      select(container).selectAll('.sankey-selector-bar, .sankey-wrapper').remove();
       clearInspector();
     },
   };

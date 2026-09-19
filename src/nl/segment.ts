@@ -34,7 +34,7 @@
 
 import type { GraphExport, VizNode } from '../types.js';
 
-export type Segment = 'biz' | 'dom' | 'imp' | 'meta';
+export type Segment = 'dat' | 'biz' | 'dom' | 'imp' | 'meta';
 
 const UTILITY_LABELS = new Set(['Bookend', 'BuildSIG']);
 
@@ -91,10 +91,17 @@ export function segmentsForNode(node: VizNode): Set<Segment> {
     case 'finding':
     case 'risk_item':
     case 'sw.use_case':
+    case 'sw.business_object':
+    case 'sw.cross_cutting_concern':
       return new Set(['biz']);
   }
 
-  // Pure dom layer — build-planning nodes (repos, stages, types).
+  // Data layer — as-is database tables, columns, relationships.
+  // Ground truth from the existing system's data model.
+  if (primary.startsWith('data.')) return new Set(['dat']);
+
+  // Pure dom layer — build-planning nodes (repos, stages, types)
+  // and domain-architecture nodes (entities, bonds, gates, states, etc.).
   // These describe how we organize the build; they're paradigm-agnostic
   // but they're not biz concerns.
   switch (primary) {
@@ -102,6 +109,18 @@ export function segmentsForNode(node: VizNode): Set<Segment> {
     case 'sw.stage':
     case 'sw.type':
     case 'sw.compose_service':
+    case 'dom.entity':
+    case 'dom.child_entity':
+    case 'dom.field':
+    case 'dom.state':
+    case 'dom.transition':
+    case 'dom.bond':
+    case 'dom.gate':
+    case 'dom.route':
+    case 'dom.execution_step':
+    case 'dom.exception':
+    case 'dom.rule':
+    case 'dom.permission':
       return new Set(['dom']);
   }
 
@@ -128,6 +147,7 @@ export function segmentForNode(node: VizNode): Segment {
 }
 
 export interface SegmentCounts {
+  dat: number;
   biz: number;
   dom: number;
   imp: number;
@@ -137,9 +157,10 @@ export interface SegmentCounts {
 }
 
 export function tallySegments(nodes: VizNode[]): SegmentCounts {
-  const counts: SegmentCounts = { biz: 0, dom: 0, imp: 0, meta: 0, seams: 0 };
+  const counts: SegmentCounts = { dat: 0, biz: 0, dom: 0, imp: 0, meta: 0, seams: 0 };
   for (const n of nodes) {
     const segs = segmentsForNode(n);
+    if (segs.has('dat')) counts.dat++;
     if (segs.has('biz')) counts.biz++;
     if (segs.has('dom')) counts.dom++;
     if (segs.has('imp')) counts.imp++;
@@ -155,10 +176,11 @@ export function tallySegments(nodes: VizNode[]): SegmentCounts {
  * boundary expansion).
  */
 const SEGMENT_DEPTH: Record<Segment, number> = {
+  dat: -1, // as-is data layer; below the pipeline, no boundary expansion
   biz: 0,
   dom: 1,
   imp: 2,
-  meta: -1, // sentinel; never selected as a strictly-below target
+  meta: -2, // sentinel; never selected as a strictly-below target
 };
 
 /**
