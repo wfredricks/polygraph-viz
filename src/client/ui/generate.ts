@@ -143,8 +143,14 @@ function showSettings(labels: string[]): void {
   showOverlay(`
     <form id="gen-settings-form" class="gen-settings">
       <div class="gen-field">
-        <label>Graph labels (from sidebar)</label>
-        <div class="gen-labels">${labels.map((l) => `<span class="gen-label-tag">${l}</span>`).join(' ')}</div>
+        <label>Graph labels — click to toggle <strong>Through Line</strong> (backbone) vs <strong>Color</strong> (supporting detail)</label>
+        <div class="gen-labels">${labels.map((l) => {
+          const firstPrefix = labels[0]?.split('.')[0] ?? '';
+          const thisPrefix = l.split('.')[0] ?? '';
+          const isThrough = firstPrefix && thisPrefix === firstPrefix;
+          return `<span class="gen-label-tag gen-role-toggle" data-label="${l}" data-role="${isThrough ? 'throughline' : 'color'}">${isThrough ? '🔵' : '🟡'} ${l}</span>`;
+        }).join(' ')}</div>
+        <div class="gen-role-legend">🔵 Through Line &nbsp; 🟡 Color &nbsp; <em>(click to toggle)</em></div>
       </div>
 
       <div class="gen-field">
@@ -197,6 +203,22 @@ function showSettings(labels: string[]): void {
     }
   });
 
+  // Wire role toggles — click to switch throughline ↔ color
+  overlay?.querySelectorAll('.gen-role-toggle').forEach((el) => {
+    el.addEventListener('click', () => {
+      const span = el as HTMLElement;
+      const current = span.dataset['role'];
+      const label = span.dataset['label'] ?? '';
+      if (current === 'color') {
+        span.dataset['role'] = 'throughline';
+        span.textContent = `🔵 ${label}`;
+      } else {
+        span.dataset['role'] = 'color';
+        span.textContent = `🟡 ${label}`;
+      }
+    });
+  });
+
   // Wire cancel
   overlay?.querySelector('.gen-btn-cancel')?.addEventListener('click', hideOverlay);
 
@@ -217,7 +239,16 @@ function showSettings(labels: string[]): void {
       return;
     }
 
-    void runGenerate(labels, goals, backstory, expectedLength, maxIterations);
+    // Read throughline/color roles from toggle state
+    const roleMap = new Map<string, 'throughline' | 'color'>();
+    overlay?.querySelectorAll('.gen-role-toggle').forEach((el) => {
+      const span = el as HTMLElement;
+      const lbl = span.dataset['label'] ?? '';
+      const role = (span.dataset['role'] ?? 'color') as 'throughline' | 'color';
+      roleMap.set(lbl, role);
+    });
+
+    void runGenerate(labels, goals, backstory, expectedLength, maxIterations, roleMap);
   });
 }
 
@@ -298,12 +329,17 @@ async function runGenerate(
   backstory: string[],
   expectedLength: object | null,
   maxIterations: number,
+  roleMap?: Map<string, 'throughline' | 'color'>,
 ): Promise<void> {
   showLoading();
 
   const request: Record<string, unknown> = {
     graphEndpoint: getGraphEndpoint(),
-    queries: labels.map((label) => ({ labels: [label], hops: 1 })),
+    queries: labels.map((label) => ({
+      labels: [label],
+      hops: 1,
+      role: roleMap?.get(label) ?? 'color',
+    })),
     backstory,
     goals,
     maxIterations,

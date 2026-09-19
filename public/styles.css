@@ -560,6 +560,19 @@ main {
   border-radius: 3px;
   padding: 1px 6px;
   color: var(--ink);
+  cursor: pointer;
+  user-select: none;
+  transition: background 80ms ease;
+}
+
+.gen-label-tag:hover {
+  background: var(--border);
+}
+
+.gen-role-legend {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 4px;
 }
 
 .gen-actions {
